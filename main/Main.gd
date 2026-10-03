@@ -4,6 +4,9 @@ extends Node2D
 ## 细胞运动：出生后缓慢自由滑动，出生不重叠，相撞后按原速率弹开。
 ## 细胞外观：白色圆形，大小统一，出生时由小到大渐变。
 ## 培养皿：大灰色圆形边界，细胞碰到后原速反弹。
+## 流程：先显示副 C 的主菜单（MainMenuLayer），点“开始”后才出现培养皿和数值。
+## 主控：第一个出生的细胞是主控（青色），WASD 控制方向，空格加速耗体力，
+##   不加速缓慢回体力，体力条在左上角数值区。用默认输入映射，无需配键。
 
 var label_state: Label
 var label_cells: Label
@@ -11,6 +14,12 @@ var label_level: Label
 var label_env: Label
 var label_ending: Label
 var label_hint: Label
+var stamina_bar: ProgressBar
+
+# 左上角数值区容器，菜单阶段先藏起来，点开始后再出现
+var stats_box: VBoxContainer
+# 副 C 的菜单层（Main.tscn 里的 MainMenuLayer），点开始后藏起来
+var menu_layer: CanvasLayer
 
 # 细胞画面相关：容器 + 共享贴图 + 随机数 + 已生成的精灵列表 + 每个细胞的速度和年龄
 var cell_layer: Node2D
@@ -21,29 +30,121 @@ var cell_vels: Array[Vector2] = []
 var cell_ages: Array[float] = []
 # 画面上最多画多少个，避免数量太大卡顿（逻辑数量不受限，Label 照常显示）
 const MAX_VISUAL: int = 80
-# 运动与碰撞参数：速度慢、细胞半径（碰撞距离 = 两倍半径）
+# 普通细胞：速度慢、细胞半径（碰撞距离 = 两倍半径）
 const SPEED_MIN: float = 20.0
 const SPEED_MAX: float = 35.0
 const CELL_RADIUS: float = 20.0
+# 主控细胞：比普通稍快，加速倍率，体力消耗/恢复速率
+const MAIN_BASE_SPEED: float = 45.0
+const MAIN_SPRINT_MULT: float = 1.8
+const MAIN_DRIFT_SPEED: float = 22.0
+const STAMINA_MAX: float = 100.0
+const STAMINA_DRAIN: float = 30.0
+const STAMINA_REGEN: float = 12.0
 # 外观参数：所有细胞最大形态统一，出生后用这么久长到最大
 const CELL_MAX_SCALE: float = 0.8
 const GROW_TIME: float = 0.6
 # 培养皿半径（相对 cell_layer 原点），细胞圆心活动范围 = 半径 - 细胞半径
 const DISH_RADIUS: float = 280.0
 
+# 体力：加速按住空格才扣，平时缓慢恢复
+var stamina: float = STAMINA_MAX
+var is_sprinting: bool = false
+# 输入自检：第一次收到移动键时在输出栏打印一行，方便定位问题
+var _input_ok_printed: bool = false
+
 func _ready() -> void:
 	rng.randomize()
 	_build_cell_layer()
 	_build_ui()
 	_connect_signals()
+	# 菜单阶段：藏起培养皿和数值，只留菜单；游戏等点开始才跑
+	menu_layer = $MainMenuLayer
+	cell_layer.visible = false
+	stats_box.visible = false
+	_connect_menu()
 	_refresh_all()
 	print("[Main] UI 初始化完成，已订阅 EventBus")
 
-# 每帧推细胞运动 + 长大动画 + 碰撞，delta 为帧耗时
+# 接副 C 菜单的“开始”按钮：她自己的脚本负责藏菜单，这里负责出现游戏并开跑
+func _connect_menu() -> void:
+	var btn: Button = get_node_or_null("MainMenuLayer/Mainmenu/VBoxContainer/Button")
+	if btn != null:
+		btn.pressed.connect(_on_start_pressed)
+	else:
+		push_warning("[Main] 没找到开始按钮，检查 mainmenu.tscn 里是不是 VBoxContainer/Button")
+
+# 点“开始”：藏菜单 → 清空旧细胞 → 体力回满 → 出现培养皿和数值 → 通知 GameManager 开跑
+# 必须释放按钮焦点，否则按空格会重新触发开始按钮导致重开
+func _on_start_pressed() -> void:
+	get_viewport().gui_release_focus()
+	if menu_layer != null:
+		menu_layer.visible = false
+	_clear_cells()
+	stamina = STAMINA_MAX
+	is_sprinting = false
+	cell_layer.visible = true
+	stats_box.visible = true
+	GameManager.start_game()
+	_refresh_all()
+
+# 清空画面上的旧细胞（重开一局时用，逻辑数量由 GameManager 重置）
+func _clear_cells() -> void:
+	for sp in cell_sprites:
+		sp.queue_free()
+	cell_sprites.clear()
+	cell_vels.clear()
+	cell_ages.clear()
+
+# 每帧推主控输入 + 体力 + 长大动画 + 运动 + 碰撞，delta 为帧耗时
+# 菜单阶段整个层藏着，直接跳过
 func _process(delta: float) -> void:
+	if cell_layer == null or not cell_layer.visible:
+		return
+	_update_main_input()
+	_update_stamina(delta)
 	_grow_cells(delta)
 	_move_cells(delta)
 	_collide_cells()
+
+# 主控输入：cell_sprites[0] 是主控（青色），WASD/方向键定方向，空格加速
+# 直接读物理键，不依赖 InputMap，动作映射被改也不影响
+# 有输入就按输入走，没输入就缓慢漂移；加速只有体力大于 0 才生效
+func _update_main_input() -> void:
+	is_sprinting = false
+	if cell_sprites.is_empty():
+		return
+	var dir := Vector2.ZERO
+	if Input.is_physical_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		dir.x -= 1.0
+	if Input.is_physical_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		dir.x += 1.0
+	if Input.is_physical_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		dir.y -= 1.0
+	if Input.is_physical_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		dir.y += 1.0
+	if dir == Vector2.ZERO:
+		dir = Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	if dir.length() < 0.01:
+		if cell_vels[0].length() > MAIN_DRIFT_SPEED:
+			cell_vels[0] = cell_vels[0].normalized() * MAIN_DRIFT_SPEED
+		return
+	if not _input_ok_printed:
+		_input_ok_printed = true
+		print("[Main] 移动输入已接通，主控开始响应")
+	var want_sprint: bool = (Input.is_physical_key_pressed(KEY_SPACE) or Input.is_action_pressed("ui_accept")) and stamina > 0.0
+	var spd: float = MAIN_BASE_SPEED * (MAIN_SPRINT_MULT if want_sprint else 1.0)
+	cell_vels[0] = dir.normalized() * spd
+	is_sprinting = want_sprint
+
+# 体力：加速扣，平时回，同步到体力条
+func _update_stamina(delta: float) -> void:
+	if is_sprinting:
+		stamina = maxf(stamina - STAMINA_DRAIN * delta, 0.0)
+	else:
+		stamina = minf(stamina + STAMINA_REGEN * delta, STAMINA_MAX)
+	if stamina_bar != null:
+		stamina_bar.value = stamina
 
 # 细胞层：放在 (640, 420) 附近，培养皿圆心就在这里，所有细胞都是它的子节点
 func _build_cell_layer() -> void:
@@ -104,12 +205,21 @@ func _build_ui() -> void:
 	box.position = Vector2(20, 20)
 	box.add_theme_constant_override("separation", 8)
 	layer.add_child(box)
+	stats_box = box
 	label_state = _make_label(box, "状态: -")
 	label_cells = _make_label(box, "细胞数量: -")
 	label_level = _make_label(box, "等级: -")
 	label_env = _make_label(box, "环境温度: -")
 	label_ending = _make_label(box, "结局: -")
-	label_hint = _make_label(box, "流程自动运行: SELECT -> GROW -> ENV -> ENEMY -> END")
+	_make_label(box, "体力（空格加速）:")
+	stamina_bar = ProgressBar.new()
+	stamina_bar.min_value = 0.0
+	stamina_bar.max_value = STAMINA_MAX
+	stamina_bar.value = STAMINA_MAX
+	stamina_bar.show_percentage = false
+	stamina_bar.custom_minimum_size = Vector2(220, 18)
+	box.add_child(stamina_bar)
+	label_hint = _make_label(box, "WASD 移动青色主控细胞，空格加速耗体力")
 
 func _make_label(parent: Control, text: String) -> Label:
 	var label := Label.new()
@@ -140,7 +250,8 @@ func _on_cell_count_changed(count: int) -> void:
 	label_cells.text = "细胞数量: %d" % count
 	_sync_cell_visuals(count)
 
-# 按数量补齐细胞精灵：少了就新建（找不重叠的位置 + 随机速度 + 从小开始长），多了就删掉
+# 按数量补齐细胞精灵：第 1 个是青色主控，其余白色
+# 少了就新建（找不重叠的位置 + 随机速度 + 从小开始长），多了就删掉（主控永远不删）
 func _sync_cell_visuals(count: int) -> void:
 	var target: int = mini(count, MAX_VISUAL)
 	while cell_sprites.size() < target:
@@ -149,15 +260,23 @@ func _sync_cell_visuals(count: int) -> void:
 		sp.position = _find_free_spot()
 		# 出生时很小，随后在 _grow_cells 里长到统一的最大尺寸
 		sp.scale = Vector2.ONE * CELL_MAX_SCALE * 0.1
-		sp.modulate = Color(1, 1, 1, 1)
+		var is_main: bool = cell_sprites.is_empty()
+		if is_main:
+			sp.modulate = Color(0.65, 1.0, 1.0)
+		else:
+			sp.modulate = Color(1, 1, 1, 1)
 		cell_layer.add_child(sp)
 		cell_sprites.append(sp)
 		cell_ages.append(0.0)
-		# 随机方向、缓慢速率
-		var ang: float = rng.randf_range(0.0, TAU)
-		var spd: float = rng.randf_range(SPEED_MIN, SPEED_MAX)
-		cell_vels.append(Vector2(cos(ang), sin(ang)) * spd)
-	while cell_sprites.size() > target:
+		# 主控初始给个慢速，方向等玩家按键；普通细胞随机方向、缓慢速率
+		if is_main:
+			cell_vels.append(Vector2.RIGHT * MAIN_DRIFT_SPEED)
+		else:
+			var ang: float = rng.randf_range(0.0, TAU)
+			var spd: float = rng.randf_range(SPEED_MIN, SPEED_MAX)
+			cell_vels.append(Vector2(cos(ang), sin(ang)) * spd)
+	# 只从末尾删，主控（下标 0）永远保留
+	while cell_sprites.size() > target and cell_sprites.size() > 1:
 		var last: Sprite2D = cell_sprites.pop_back()
 		cell_vels.pop_back()
 		cell_ages.pop_back()
@@ -196,6 +315,7 @@ func _random_point_in_dish(max_r: float) -> Vector2:
 	return Vector2(cos(a), sin(a)) * r
 
 # 直线滑动 + 碰到培养皿圆壁沿法线反射，速率归一回原来大小
+# 主控的速度由 _update_main_input 每帧重写，这里只管推位置和碰壁
 func _move_cells(delta: float) -> void:
 	var max_center: float = DISH_RADIUS - CELL_RADIUS
 	for i in range(cell_sprites.size()):
@@ -250,6 +370,9 @@ func _collide_cells() -> void:
 				nv2 = n * s2
 			cell_vels[i] = nv1
 			cell_vels[j] = nv2
+			# 主控被撞后速率可能乱掉，下一帧输入会按规则重写，这里只保底
+			if i == 0 and nv1.length() > MAIN_BASE_SPEED * MAIN_SPRINT_MULT:
+				cell_vels[0] = nv1.normalized() * MAIN_BASE_SPEED * MAIN_SPRINT_MULT
 
 func _on_env_changed(name: String, value: float) -> void:
 	label_env.text = "环境 %s: %.1f" % [name, value]
