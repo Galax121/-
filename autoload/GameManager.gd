@@ -123,6 +123,11 @@ func start_game() -> void:
 	_change_state(GameState.SELECT)
 	print("[GameManager] 玩家点开始，进入游戏")
 
+# 退出到菜单：停住推进，画面由 Main.gd 藏起来
+func stop_to_menu() -> void:
+	started = false
+	print("[GameManager] 退出到菜单，模拟暂停")
+
 func state_to_string(state: int) -> String:
 	match state:
 		GameState.SELECT:

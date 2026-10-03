@@ -7,6 +7,7 @@ extends Node2D
 ## 流程：先显示副 C 的主菜单（MainMenuLayer），点“开始”后才出现培养皿和数值。
 ## 主控：第一个出生的细胞是主控（青色），WASD 控制方向，空格加速耗体力，
 ##   不加速缓慢回体力，体力条在左上角数值区。用默认输入映射，无需配键。
+## 暂停：右上角暂停键 → 整局定住并弹菜单（继续 / 状态 / 退出游戏）。
 
 var label_state: Label
 var label_cells: Label
@@ -20,6 +21,14 @@ var stamina_bar: ProgressBar
 var stats_box: VBoxContainer
 # 副 C 的菜单层（Main.tscn 里的 MainMenuLayer），点开始后藏起来
 var menu_layer: CanvasLayer
+
+# 暂停相关：暂停层（含暂停键和暂停菜单，暂停时也要能点所以常开进程模式）
+var pause_layer: CanvasLayer
+var pause_btn: Button
+var pause_menu: CenterContainer
+# 状态浮层：显示主控所有数值，点任意处回到暂停菜单
+var state_overlay: CanvasLayer
+var state_label: Label
 
 # 细胞画面相关：容器 + 共享贴图 + 随机数 + 已生成的精灵列表 + 每个细胞的速度和年龄
 var cell_layer: Node2D
@@ -57,11 +66,13 @@ func _ready() -> void:
 	rng.randomize()
 	_build_cell_layer()
 	_build_ui()
+	_build_pause_ui()
 	_connect_signals()
-	# 菜单阶段：藏起培养皿和数值，只留菜单；游戏等点开始才跑
+	# 菜单阶段：藏起培养皿、数值和暂停键，只留菜单；游戏等点开始才跑
 	menu_layer = $MainMenuLayer
 	cell_layer.visible = false
 	stats_box.visible = false
+	pause_layer.visible = false
 	_connect_menu()
 	_refresh_all()
 	print("[Main] UI 初始化完成，已订阅 EventBus")
@@ -74,17 +85,21 @@ func _connect_menu() -> void:
 	else:
 		push_warning("[Main] 没找到开始按钮，检查 mainmenu.tscn 里是不是 VBoxContainer/Button")
 
-# 点“开始”：藏菜单 → 清空旧细胞 → 体力回满 → 出现培养皿和数值 → 通知 GameManager 开跑
+# 点“开始”：藏菜单 → 清空旧细胞 → 体力回满 → 出现培养皿、数值和暂停键 → 通知开跑
 # 必须释放按钮焦点，否则按空格会重新触发开始按钮导致重开
 func _on_start_pressed() -> void:
 	get_viewport().gui_release_focus()
+	get_tree().paused = false
 	if menu_layer != null:
 		menu_layer.visible = false
+	pause_menu.visible = false
+	state_overlay.visible = false
 	_clear_cells()
 	stamina = STAMINA_MAX
 	is_sprinting = false
 	cell_layer.visible = true
 	stats_box.visible = true
+	pause_layer.visible = true
 	GameManager.start_game()
 	_refresh_all()
 
@@ -97,7 +112,7 @@ func _clear_cells() -> void:
 	cell_ages.clear()
 
 # 每帧推主控输入 + 体力 + 长大动画 + 运动 + 碰撞，delta 为帧耗时
-# 菜单阶段整个层藏着，直接跳过
+# 菜单阶段整个层藏着，直接跳过；暂停时引擎不会调这里（被定住）
 func _process(delta: float) -> void:
 	if cell_layer == null or not cell_layer.visible:
 		return
@@ -106,6 +121,144 @@ func _process(delta: float) -> void:
 	_grow_cells(delta)
 	_move_cells(delta)
 	_collide_cells()
+
+# ---- 暂停菜单 ----
+# 右上角暂停键 + 居中弹窗（继续 / 状态 / 退出游戏），暂停层常开进程所以定住也能点
+func _build_pause_ui() -> void:
+	pause_layer = CanvasLayer.new()
+	pause_layer.name = "PauseLayer"
+	pause_layer.layer = 5
+	pause_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(pause_layer)
+	pause_btn = _make_button("暂停", 24)
+	pause_btn.anchor_left = 1.0
+	pause_btn.anchor_right = 1.0
+	pause_btn.offset_left = -150.0
+	pause_btn.offset_right = -20.0
+	pause_btn.offset_top = 20.0
+	pause_btn.offset_bottom = 68.0
+	pause_layer.add_child(pause_btn)
+	pause_btn.pressed.connect(_on_pause_pressed)
+	# 暂停菜单：半透明底 + 三个键
+	pause_menu = CenterContainer.new()
+	pause_menu.name = "PauseMenu"
+	pause_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.visible = false
+	pause_layer.add_child(pause_menu)
+	var panel := PanelContainer.new()
+	pause_menu.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	panel.add_child(box)
+	var btn_resume := _make_button("继续", 28)
+	var btn_state := _make_button("状态", 28)
+	var btn_quit := _make_button("退出游戏", 28)
+	box.add_child(btn_resume)
+	box.add_child(btn_state)
+	box.add_child(btn_quit)
+	btn_resume.pressed.connect(_on_resume_pressed)
+	btn_state.pressed.connect(_on_state_pressed)
+	btn_quit.pressed.connect(_on_quit_to_menu)
+	# 状态浮层：比暂停菜单再高一层，点任意处回到暂停菜单
+	state_overlay = CanvasLayer.new()
+	state_overlay.name = "StateOverlay"
+	state_overlay.layer = 6
+	state_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	state_overlay.visible = false
+	add_child(state_overlay)
+	var bg := ColorRect.new()
+	bg.color = Color(0, 0, 0, 0.7)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	state_overlay.add_child(bg)
+	# 全屏隐形按钮接住所有点击（文字层全部穿透，保证点任意处都返回）
+	var catcher := Button.new()
+	catcher.flat = true
+	catcher.text = ""
+	catcher.focus_mode = Control.FOCUS_NONE
+	catcher.set_anchors_preset(Control.PRESET_FULL_RECT)
+	state_overlay.add_child(catcher)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	state_overlay.add_child(center)
+	state_label = Label.new()
+	state_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_font(state_label, 26)
+	center.add_child(state_label)
+	catcher.pressed.connect(_on_state_return)
+
+# 做一个中文字体可用的按钮：去焦点（防空格误触）+ 系统中文字体
+func _make_button(text: String, font_size: int) -> Button:
+	var btn := Button.new()
+	btn.text = text
+	btn.focus_mode = Control.FOCUS_NONE
+	var sys_font := SystemFont.new()
+	sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
+	btn.add_theme_font_override("font", sys_font)
+	btn.add_theme_font_size_override("font_size", font_size)
+	return btn
+
+func _apply_font(label: Label, font_size: int) -> void:
+	var sys_font := SystemFont.new()
+	sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
+	label.add_theme_font_override("font", sys_font)
+	label.add_theme_font_size_override("font_size", font_size)
+
+# 点暂停键：定住整局（含细胞和计时），弹出菜单
+func _on_pause_pressed() -> void:
+	get_tree().paused = true
+	pause_menu.visible = true
+
+# 继续：收起菜单，原速接着跑
+func _on_resume_pressed() -> void:
+	pause_menu.visible = false
+	get_tree().paused = false
+
+# 状态：藏暂停菜单，弹出主控数值浮层
+func _on_state_pressed() -> void:
+	pause_menu.visible = false
+	state_label.text = _main_stats_text()
+	state_overlay.visible = true
+
+# 点浮层任意处：回暂停菜单（游戏继续定着）
+func _on_state_return() -> void:
+	state_overlay.visible = false
+	pause_menu.visible = true
+
+# 退出游戏：解暂停 → 藏游戏 → 清细胞 → 停模拟 → 回主菜单
+func _on_quit_to_menu() -> void:
+	get_tree().paused = false
+	pause_menu.visible = false
+	state_overlay.visible = false
+	pause_layer.visible = false
+	cell_layer.visible = false
+	stats_box.visible = false
+	_clear_cells()
+	GameManager.stop_to_menu()
+	if menu_layer != null:
+		menu_layer.visible = true
+
+# 主控所有数值：位置、速度、速率、体力、大小、存活时间，外加细胞总数
+func _main_stats_text() -> String:
+	var lines := PackedStringArray()
+	lines.append("主控细胞状态\n")
+	if cell_sprites.is_empty():
+		lines.append("场上暂无细胞")
+	else:
+		var pos: Vector2 = cell_sprites[0].position
+		var vel: Vector2 = cell_vels[0]
+		var diameter: float = 64.0 * cell_sprites[0].scale.x
+		lines.append("位置：(%.0f, %.0f)" % [pos.x, pos.y])
+		lines.append("速度：(%.1f, %.1f)" % [vel.x, vel.y])
+		lines.append("速率：%.1f 像素/秒" % vel.length())
+		lines.append("体力：%.0f / %.0f" % [stamina, STAMINA_MAX])
+		lines.append("大小：缩放 %.2f，直径约 %.0f 像素" % [cell_sprites[0].scale.x, diameter])
+		lines.append("存活：%.1f 秒" % cell_ages[0])
+	lines.append("细胞总数：%d" % GameManager.get_cell_count())
+	lines.append("等级：%d" % GameManager.get_level())
+	lines.append("\n点击任意处返回")
+	return "\n".join(lines)
 
 # 主控输入：cell_sprites[0] 是主控（青色），WASD/方向键定方向，空格加速
 # 直接读物理键，不依赖 InputMap，动作映射被改也不影响
@@ -224,10 +377,7 @@ func _build_ui() -> void:
 func _make_label(parent: Control, text: String) -> Label:
 	var label := Label.new()
 	label.text = text
-	var sys_font := SystemFont.new()
-	sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
-	label.add_theme_font_override("font", sys_font)
-	label.add_theme_font_size_override("font_size", 24)
+	_apply_font(label, 24)
 	parent.add_child(label)
 	return label
 
