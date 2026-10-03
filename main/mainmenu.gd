@@ -8,7 +8,15 @@ var _help_layer: CanvasLayer
 
 func _ready() -> void:
 	_build_help()
-	for button in $Panel/VBoxContainer.get_children():
+	# 延迟一帧再绑按钮动画：等布局算完尺寸，缩放才围绕按钮中心
+	call_deferred("_init_button_fx")
+
+func _init_button_fx() -> void:
+	var box: Node = get_node_or_null("VBoxContainer")
+	if box == null:
+		push_warning("[mainmenu] 找不到 VBoxContainer，按钮动画跳过")
+		return
+	for button in box.get_children():
 		if button is Button:
 			button.pivot_offset = button.size / 2
 			button.mouse_entered.connect(_on_button_hover.bind(button))
@@ -84,4 +92,5 @@ func _on_button_up(button: Button):
 	tween.tween_property(button, "scale", Vector2(1.2, 1.2), 0.15)
 
 func _play_ui_sound():
-	$UISound.play()
+	if has_node("UISound"):
+		$UISound.play()
