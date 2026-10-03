@@ -1,0 +1,148 @@
+[gd_scene format=3 uid="uid://bakjkikwjmoti"]
+
+[ext_resource type="Script" uid="uid://c76dtwyexgyq" path="res://main/mainmenu.gd" id="1_kwga5"]
+[ext_resource type="FontFile" uid="uid://bq4stsbjdtgfj" path="res://main/字体/NanoTikBazHei-Bold.ttf" id="2_insle"]
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_vd1cm"]
+modulate_color = Color(0.9882218, 0.9882218, 0.9882218, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_vd1cm"]
+bg_color = Color(0.31600198, 0.72724897, 0.75558794, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_size = 5
+shadow_offset = Vector2(0, 3.41)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_d2nv2"]
+bg_color = Color(0.32657596, 0.74142313, 0.77414745, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_size = 5
+shadow_offset = Vector2(0, 3.41)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_wgsso"]
+bg_color = Color(0.112808816, 0.33695552, 0.3535538, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_size = 5
+shadow_offset = Vector2(0, 3.41)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_igs2m"]
+bg_color = Color(0.12738523, 0.37289742, 0.38794312, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_size = 5
+shadow_offset = Vector2(0, 3.41)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_kwga5"]
+bg_color = Color(0.17463052, 0.4693666, 0.49170166, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_size = 5
+shadow_offset = Vector2(0, 3.41)
+
+[node name="Mainmenu" type="Control" unique_id=1892705112]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_kwga5")
+
+[node name="Panel" type="Panel" parent="." unique_id=48671595]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = -0.00043402778
+anchor_top = -0.008487654
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxTexture_vd1cm")
+metadata/_edit_use_anchors_ = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1762307263]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -248.0
+offset_top = -137.0
+offset_right = 261.0
+offset_bottom = 147.5
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+theme_override_constants/separation = 15
+
+[node name="Button" type="Button" parent="VBoxContainer" unique_id=232732874]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.875, 0.875, 0.875, 1)
+theme_override_fonts/font = ExtResource("2_insle")
+theme_override_font_sizes/font_size = 58
+theme_override_styles/normal = SubResource("StyleBoxFlat_vd1cm")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_d2nv2")
+theme_override_styles/hover = SubResource("StyleBoxFlat_wgsso")
+text = "开始"
+
+[node name="Button2" type="Button" parent="VBoxContainer" unique_id=2045017997]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.875, 0.875, 0.875, 1)
+theme_override_fonts/font = ExtResource("2_insle")
+theme_override_font_sizes/font_size = 58
+theme_override_styles/normal = SubResource("StyleBoxFlat_vd1cm")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_vd1cm")
+theme_override_styles/hover = SubResource("StyleBoxFlat_igs2m")
+text = "菜单"
+
+[node name="Button3" type="Button" parent="VBoxContainer" unique_id=532318426]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.875, 0.875, 0.875, 1)
+theme_override_fonts/font = ExtResource("2_insle")
+theme_override_font_sizes/font_size = 58
+theme_override_styles/normal = SubResource("StyleBoxFlat_vd1cm")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_vd1cm")
+theme_override_styles/hover = SubResource("StyleBoxFlat_kwga5")
+text = "退出"
+
+[node name="Label" type="Label" parent="." unique_id=1248477056]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -129.0
+offset_top = -262.0
+offset_right = 132.5
+offset_bottom = -147.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+theme_override_constants/shadow_offset_x = 5
+theme_override_constants/shadow_offset_y = 10
+theme_override_fonts/font = ExtResource("2_insle")
+theme_override_font_sizes/font_size = 87
+text = "超级无敌细胞大爆发"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[connection signal="pressed" from="VBoxContainer/Button" to="." method="_on_button_pressed"]
+[connection signal="pressed" from="VBoxContainer/Button3" to="." method="_on_button_3_pressed"]
