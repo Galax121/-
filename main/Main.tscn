@@ -9,4 +9,3 @@ script = ExtResource("1")
 [node name="MainMenuLayer" type="CanvasLayer" parent="." unique_id=1574903055]
 
 [node name="Mainmenu" parent="MainMenuLayer" unique_id=1892705112 instance=ExtResource("2_wbnyf")]
-script = null

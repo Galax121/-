@@ -12,6 +12,8 @@ var current_state: int = GameState.SELECT
 var elapsed: float = 0.0
 var state_timer: float = 0.0
 var ending_id: String = ""
+# 是否已点开始：没点之前停在菜单界面，_process 不推进
+var started: bool = false
 
 # 不写类型，方便以后替换成真实系统
 var cell_system = null
@@ -36,6 +38,9 @@ func _ready() -> void:
 	print("[GameManager] 游戏启动，当前状态 = SELECT（自动选细胞）")
 
 func _process(delta: float) -> void:
+	# 没点开始就不跑，停在菜单界面
+	if not started:
+		return
 	if current_state == GameState.END:
 		return
 	elapsed += delta
@@ -105,6 +110,23 @@ func _trigger_ending(id: String) -> void:
 	print("[GameManager] 结局触发：%s" % id)
 	EventBus.ending_triggered.emit(id)
 	_change_state(GameState.END)
+
+# 从菜单点“开始”后调用：重置所有系统并开始推进，支持重开一局
+func start_game() -> void:
+	cell_system.init()
+	environment_system.init()
+	skill_system.init()
+	ending_system.init()
+	elapsed = 0.0
+	ending_id = ""
+	started = true
+	_change_state(GameState.SELECT)
+	print("[GameManager] 玩家点开始，进入游戏")
+
+# 退出到菜单：停住推进，画面由 Main.gd 藏起来
+func stop_to_menu() -> void:
+	started = false
+	print("[GameManager] 退出到菜单，模拟暂停")
 
 func state_to_string(state: int) -> String:
 	match state:
