@@ -4,6 +4,8 @@ extends "res://core/SystemBase.gd"
 var level: int = 1
 var exp: float = 0.0
 var exp_to_next: float = 20.0
+# 主控细胞最大等级：满级后不再涨经验
+const MAX_LEVEL: int = 5
 
 func init() -> void:
 	level = 1
@@ -13,6 +15,8 @@ func init() -> void:
 	EventBus.level_changed.emit(level)
 
 func tick(delta: float) -> void:
+	if level >= MAX_LEVEL:
+		return
 	exp += delta * 8.0
 	if exp >= exp_to_next:
 		exp -= exp_to_next

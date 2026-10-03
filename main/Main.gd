@@ -8,6 +8,9 @@ extends Node2D
 ## 主控：第一个出生的细胞是主控（青色），WASD 控制方向，空格加速耗体力，
 ##   不加速缓慢回体力，体力条在左上角数值区。用默认输入映射，无需配键。
 ## 暂停：右上角暂停键 → 整局定住并弹菜单（继续 / 状态 / 退出游戏）。
+## 等级：左上角数值只代表主控；其它细胞主控2级后随机出现，随存活变长升级
+##   （升级速度与主控相近，移动速度与主控相同），上限为主控当前等级减一；
+##   每个细胞头顶显示 lv.数字。
 
 var label_state: Label
 var label_cells: Label
@@ -37,6 +40,14 @@ var rng := RandomNumberGenerator.new()
 var cell_sprites: Array[Sprite2D] = []
 var cell_vels: Array[Vector2] = []
 var cell_ages: Array[float] = []
+# 每个细胞的等级和头顶的 lv 标签（下标与 cell_sprites 对齐）
+var cell_levels: Array[int] = []
+var cell_level_labels: Array[Label] = []
+# 出生调度：逻辑层涨的数先攒着，主控2级后随机滴出来
+var _pending: int = 0
+var _spawned_total: int = 0
+var _spawn_timer: float = 0.0
+var _next_spawn_in: float = 0.0
 # 画面上最多画多少个，避免数量太大卡顿（逻辑数量不受限，Label 照常显示）
 const MAX_VISUAL: int = 80
 # 普通细胞：速度慢、细胞半径（碰撞距离 = 两倍半径）
@@ -50,6 +61,8 @@ const MAIN_DRIFT_SPEED: float = 22.0
 const STAMINA_MAX: float = 100.0
 const STAMINA_DRAIN: float = 30.0
 const STAMINA_REGEN: float = 12.0
+# 其它细胞：移动速度与主控相同，出生后每隔这么久升1级（与主控升级速度相近）
+const OTHER_LEVEL_UP_TIME: float = 4.0
 # 外观参数：所有细胞最大形态统一，出生后用这么久长到最大
 const CELL_MAX_SCALE: float = 0.8
 const GROW_TIME: float = 0.6
@@ -107,20 +120,31 @@ func _on_start_pressed() -> void:
 func _clear_cells() -> void:
 	for sp in cell_sprites:
 		sp.queue_free()
+	for lv in cell_level_labels:
+		lv.queue_free()
 	cell_sprites.clear()
 	cell_vels.clear()
 	cell_ages.clear()
+	cell_levels.clear()
+	cell_level_labels.clear()
+	_pending = 0
+	_spawned_total = 0
+	_spawn_timer = 0.0
+	_next_spawn_in = 0.0
 
-# 每帧推主控输入 + 体力 + 长大动画 + 运动 + 碰撞，delta 为帧耗时
+# 每帧：主控输入 + 体力 + 出生调度 + 长大 + 运动 + 碰撞 + 等级，delta 为帧耗时
 # 菜单阶段整个层藏着，直接跳过；暂停时引擎不会调这里（被定住）
 func _process(delta: float) -> void:
 	if cell_layer == null or not cell_layer.visible:
 		return
 	_update_main_input()
 	_update_stamina(delta)
+	_update_spawning(delta)
 	_grow_cells(delta)
 	_move_cells(delta)
 	_collide_cells()
+	_update_other_levels(delta)
+	_update_level_labels()
 
 # ---- 暂停菜单 ----
 # 右上角暂停键 + 居中弹窗（继续 / 状态 / 退出游戏），暂停层常开进程所以定住也能点
@@ -239,7 +263,7 @@ func _on_quit_to_menu() -> void:
 	if menu_layer != null:
 		menu_layer.visible = true
 
-# 主控所有数值：位置、速度、速率、体力、大小、存活时间，外加细胞总数
+# 主控所有数值：位置、速度、速率、体力、等级、大小、存活时间，外加场上总数
 func _main_stats_text() -> String:
 	var lines := PackedStringArray()
 	lines.append("主控细胞状态\n")
@@ -253,10 +277,10 @@ func _main_stats_text() -> String:
 		lines.append("速度：(%.1f, %.1f)" % [vel.x, vel.y])
 		lines.append("速率：%.1f 像素/秒" % vel.length())
 		lines.append("体力：%.0f / %.0f" % [stamina, STAMINA_MAX])
+		lines.append("等级：lv.%d（最高 5）" % cell_levels[0])
 		lines.append("大小：缩放 %.2f，直径约 %.0f 像素" % [cell_sprites[0].scale.x, diameter])
 		lines.append("存活：%.1f 秒" % cell_ages[0])
-	lines.append("细胞总数：%d" % GameManager.get_cell_count())
-	lines.append("等级：%d" % GameManager.get_level())
+	lines.append("场上细胞总数：%d" % cell_sprites.size())
 	lines.append("\n点击任意处返回")
 	return "\n".join(lines)
 
@@ -396,52 +420,119 @@ func _refresh_all() -> void:
 	if GameManager.ending_id != "":
 		_on_ending_triggered(GameManager.ending_id)
 
+# 逻辑层涨数只攒进待出生池，不直接刷画面；逻辑掉数则同步裁掉（主控保留）
 func _on_cell_count_changed(count: int) -> void:
-	label_cells.text = "细胞数量: %d" % count
-	_sync_cell_visuals(count)
+	_pending = maxi(count - _spawned_total, 0)
+	while _spawned_total > count and cell_sprites.size() > 1:
+		_free_last_cell()
+		_spawned_total -= 1
+	_update_count_label()
 
-# 按数量补齐细胞精灵：第 1 个是青色主控，其余白色
-# 少了就新建（找不重叠的位置 + 随机速度 + 从小开始长），多了就删掉（主控永远不删）
-func _sync_cell_visuals(count: int) -> void:
-	var target: int = mini(count, MAX_VISUAL)
-	while cell_sprites.size() < target:
-		var sp := Sprite2D.new()
-		sp.texture = cell_texture
-		sp.position = _find_free_spot()
-		# 出生时很小，随后在 _grow_cells 里长到统一的最大尺寸
-		sp.scale = Vector2.ONE * CELL_MAX_SCALE * 0.1
-		var is_main: bool = cell_sprites.is_empty()
-		if is_main:
-			sp.modulate = Color(0.65, 1.0, 1.0)
-		else:
-			sp.modulate = Color(1, 1, 1, 1)
-		cell_layer.add_child(sp)
-		cell_sprites.append(sp)
-		cell_ages.append(0.0)
-		# 主控初始给个慢速，方向等玩家按键；普通细胞随机方向、缓慢速率
-		if is_main:
-			cell_vels.append(Vector2.RIGHT * MAIN_DRIFT_SPEED)
-		else:
-			var ang: float = rng.randf_range(0.0, TAU)
-			var spd: float = rng.randf_range(SPEED_MIN, SPEED_MAX)
-			cell_vels.append(Vector2(cos(ang), sin(ang)) * spd)
-	# 只从末尾删，主控（下标 0）永远保留
-	while cell_sprites.size() > target and cell_sprites.size() > 1:
-		var last: Sprite2D = cell_sprites.pop_back()
-		cell_vels.pop_back()
-		cell_ages.pop_back()
-		last.queue_free()
+# 左上角细胞数量显示场上实际总数
+func _update_count_label() -> void:
+	label_cells.text = "细胞数量: %d" % cell_sprites.size()
 
-# 出生渐变：用 smoothstep 让缩放从 10% 平滑长到 100%，到时间就停在统一大小
+# 出生调度：第一个永远是主控；其它细胞主控2级后才随机滴出来（0.15~0.4 秒一个）
+func _update_spawning(delta: float) -> void:
+	if _pending <= 0:
+		return
+	if cell_sprites.size() >= MAX_VISUAL:
+		_pending = 0
+		return
+	var is_first: bool = cell_sprites.is_empty()
+	if not is_first and GameManager.get_level() < 2:
+		return
+	_spawn_timer += delta
+	if _spawn_timer < _next_spawn_in:
+		return
+	_spawn_timer = 0.0
+	_next_spawn_in = rng.randf_range(0.15, 0.4)
+	_spawn_one_cell()
+	_pending -= 1
+	_spawned_total += 1
+	_update_count_label()
+
+# 出生一个细胞：找不重叠的位置，主控青色慢速，其它白色、速度与主控相同、1 级开局
+func _spawn_one_cell() -> void:
+	var is_main: bool = cell_sprites.is_empty()
+	var sp := Sprite2D.new()
+	sp.texture = cell_texture
+	sp.position = _find_free_spot()
+	# 出生时很小，随后在 _grow_cells 里长到统一的最大尺寸
+	sp.scale = Vector2.ONE * CELL_MAX_SCALE * 0.1
+	if is_main:
+		sp.modulate = Color(0.65, 1.0, 1.0)
+	else:
+		sp.modulate = Color(1, 1, 1, 1)
+	cell_layer.add_child(sp)
+	cell_sprites.append(sp)
+	cell_ages.append(0.0)
+	if is_main:
+		cell_levels.append(mini(GameManager.get_level(), 5))
+		cell_vels.append(Vector2.RIGHT * MAIN_DRIFT_SPEED)
+	else:
+		cell_levels.append(1)
+		var ang: float = rng.randf_range(0.0, TAU)
+		cell_vels.append(Vector2(cos(ang), sin(ang)) * MAIN_BASE_SPEED)
+	var lv := _make_level_label(is_main)
+	lv.text = "lv.%d" % cell_levels[cell_levels.size() - 1]
+	lv.position = sp.position + Vector2(-14, -36)
+	cell_layer.add_child(lv)
+	cell_level_labels.append(lv)
+
+# 头顶等级签：纯英文数字，默认字体即可，主控偏青、其它白色，点穿透
+func _make_level_label(is_main: bool) -> Label:
+	var lv := Label.new()
+	lv.add_theme_font_size_override("font_size", 14)
+	if is_main:
+		lv.add_theme_color_override("font_color", Color(0.7, 1.0, 1.0))
+	else:
+		lv.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
+	lv.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	lv.add_theme_constant_override("shadow_offset_x", 1)
+	lv.add_theme_constant_override("shadow_offset_y", 1)
+	lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return lv
+
+# 从末尾删一个细胞（精灵、速度、年龄、等级、等级签一起删，主控下标 0 永不动）
+func _free_last_cell() -> void:
+	var last: Sprite2D = cell_sprites.pop_back()
+	var last_lv: Label = cell_level_labels.pop_back()
+	cell_vels.pop_back()
+	cell_ages.pop_back()
+	cell_levels.pop_back()
+	last_lv.queue_free()
+	last.queue_free()
+
+# 出生渐变 + 存活计时：年龄一直累积（等级用它算），缩放到头就停在统一大小
 func _grow_cells(delta: float) -> void:
 	for i in range(cell_sprites.size()):
+		cell_ages[i] += delta
 		if cell_ages[i] >= GROW_TIME:
 			continue
-		cell_ages[i] += delta
 		var t: float = clampf(cell_ages[i] / GROW_TIME, 0.0, 1.0)
 		var smooth: float = t * t * (3.0 - 2.0 * t)
 		var s: float = CELL_MAX_SCALE * (0.1 + 0.9 * smooth)
 		cell_sprites[i].scale = Vector2(s, s)
+
+# 其它细胞升级：存活每满 4 秒升 1 级，上限为主控当前等级减一（至少 1 级）
+# 主控等级直接跟技能系统走（最高 5 级已在 SkillSystemStub 里封顶）
+func _update_other_levels(_delta: float) -> void:
+	var main_lv: int = mini(GameManager.get_level(), 5)
+	if not cell_levels.is_empty() and cell_levels[0] != main_lv:
+		cell_levels[0] = main_lv
+		cell_level_labels[0].text = "lv.%d" % main_lv
+	var cap: int = maxi(main_lv - 1, 1)
+	for i in range(1, cell_levels.size()):
+		var lv: int = mini(1 + int(cell_ages[i] / OTHER_LEVEL_UP_TIME), cap)
+		if lv != cell_levels[i]:
+			cell_levels[i] = lv
+			cell_level_labels[i].text = "lv.%d" % lv
+
+# 等级签跟随：每帧贴到各自细胞正上方
+func _update_level_labels() -> void:
+	for i in range(cell_sprites.size()):
+		cell_level_labels[i].position = cell_sprites[i].position + Vector2(-14, -36)
 
 # 在培养皿圆内找一个与其他细胞不重叠的出生点，最多试 20 次
 func _find_free_spot() -> Vector2:
@@ -527,8 +618,9 @@ func _collide_cells() -> void:
 func _on_env_changed(name: String, value: float) -> void:
 	label_env.text = "环境 %s: %.1f" % [name, value]
 
+# 左上角等级只代表主控（与头顶 lv.数字一致，最高 5）
 func _on_level_changed(level: int) -> void:
-	label_level.text = "等级: %d" % level
+	label_level.text = "等级: %d" % mini(level, 5)
 
 func _on_ending_triggered(ending_id: String) -> void:
 	var desc := ending_id
