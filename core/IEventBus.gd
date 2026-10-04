@@ -15,7 +15,7 @@ signal cell_count_changed(count: int)
 signal env_changed(name: String, value: float)
 # 等级变化时发出，参数为当前等级（副程 B 发，副程 C 收）
 signal level_changed(level: int)
-# 结局触发时发出，参数为结局 id，如 "player_win" / "draw"（主程发，副程 C 收）
+# 结局触发时发出，参数为结局 id，目前只有 "player_win"（主程发，副程 C 收）
 signal ending_triggered(ending_id: String)
 # 游戏状态机变化时发出，参数为状态名字符串（主程发，副程 C 收）
 signal game_state_changed(state: String)

@@ -23,7 +23,7 @@ extends RefCounted
 ##   cell_count_changed(count: int)   # A 发，C 收
 ##   env_changed(name: String, value: float)  # B 发，C 收，name 如 "temperature"
 ##   level_changed(level: int)         # B 发，C 收
-##   ending_triggered(ending_id: String)  # 主程发，C 收，取值 "player_win" / "draw"
+##   ending_triggered(ending_id: String)  # 主程发，C 收，目前只有 "player_win"
 ##   game_state_changed(state: String) # 主程发，C 收，取值 SELECT/GROW/ENV/ENEMY/END
 
 # 副程真实系统写好后，主程用这一个函数整体换装，不用逐个调 set_*。

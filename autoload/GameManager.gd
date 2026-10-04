@@ -91,11 +91,8 @@ func _update_state_flow() -> void:
 				print("[GameManager] 环境变化完成，进入 ENEMY")
 				_change_state(GameState.ENEMY)
 		GameState.ENEMY:
-			if state_timer >= 15.0:
-				if get_cell_count() > 30:
-					_trigger_ending("player_win")
-				else:
-					_trigger_ending("draw")
+			# 敌对阶段不设超时，唯一胜利就是细胞数>50，由 _check_ending 判定
+			pass
 
 func _check_ending() -> bool:
 	if ending_system != null and ending_system.has_method("check_ending"):

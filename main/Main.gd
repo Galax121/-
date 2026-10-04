@@ -767,8 +767,6 @@ func _on_ending_triggered(ending_id: String) -> void:
 	var desc := ending_id
 	if ending_id == "player_win":
 		desc = "player_win（玩家胜：细胞数>50）"
-	elif ending_id == "draw":
-		desc = "draw（平局：时间>60秒）"
 	label_ending.text = "结局: %s" % desc
 
 func _on_game_state_changed(state: String) -> void:
