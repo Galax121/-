@@ -6,8 +6,8 @@ extends "res://core/ICellSystem.gd"
 
 # 当前细胞总数
 var cell_count: int = 1
-# 每秒平均增长多少个细胞
-var growth_per_sec: float = 3.0
+# 每秒平均增长多少个细胞（调小则全场变慢，胜利来得更晚）
+var growth_per_sec: float = 1.5
 # 小数累加器，避免每帧都只能加整数
 var _accum: float = 0.0
 

@@ -60,7 +60,7 @@ func _build_help() -> void:
 	label.add_theme_font_size_override("font_size", 32)
 	center.add_child(label)
 	catcher.pressed.connect(_on_help_return)
-
+	   
 # “菜单”键：开 / 关键位说明
 func _on_button_2_pressed() -> void:
 	_help_layer.visible = not _help_layer.visible

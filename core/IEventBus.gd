@@ -19,3 +19,5 @@ signal level_changed(level: int)
 signal ending_triggered(ending_id: String)
 # 游戏状态机变化时发出，参数为状态名字符串（主程发，副程 C 收）
 signal game_state_changed(state: String)
+# 敌军数量变化时发出（敌方系统发，Main 收，主控3级登场后才有）
+signal enemy_count_changed(count: int)

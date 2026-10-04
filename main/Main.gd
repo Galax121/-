@@ -74,6 +74,15 @@ var stamina: float = STAMINA_MAX
 var is_sprinting: bool = false
 # 输入自检：第一次收到移动键时在输出栏打印一行，方便定位问题
 var _input_ok_printed: bool = false
+# 敌方画面：红色精灵、速度、年龄与出生调度（逻辑数在 EnemySystem 里）
+var enemy_sprites: Array[Sprite2D] = []
+var enemy_vels: Array[Vector2] = []
+var enemy_ages: Array[float] = []
+var _enemy_pending: int = 0
+var _enemy_spawned_total: int = 0
+var _enemy_spawn_timer: float = 0.0
+var _enemy_next_in: float = 0.0
+var _enemy_time: float = 0.0
 
 func _ready() -> void:
 	rng.randomize()
@@ -108,6 +117,7 @@ func _on_start_pressed() -> void:
 	pause_menu.visible = false
 	state_overlay.visible = false
 	_clear_cells()
+	_clear_enemies()
 	stamina = STAMINA_MAX
 	is_sprinting = false
 	cell_layer.visible = true
@@ -140,9 +150,13 @@ func _process(delta: float) -> void:
 	_update_main_input()
 	_update_stamina(delta)
 	_update_spawning(delta)
+	_update_enemy_spawning(delta)
 	_grow_cells(delta)
+	_grow_enemies(delta)
 	_move_cells(delta)
+	_move_enemies(delta)
 	_collide_cells()
+	_separate_enemies()
 	_update_other_levels(delta)
 	_update_level_labels()
 
@@ -259,6 +273,7 @@ func _on_quit_to_menu() -> void:
 	cell_layer.visible = false
 	stats_box.visible = false
 	_clear_cells()
+	_clear_enemies()
 	GameManager.stop_to_menu()
 	if menu_layer != null:
 		menu_layer.visible = true
@@ -277,6 +292,7 @@ func _main_stats_text() -> String:
 		lines.append("速度：(%.1f, %.1f)" % [vel.x, vel.y])
 		lines.append("速率：%.1f 像素/秒" % vel.length())
 		lines.append("体力：%.0f / %.0f" % [stamina, STAMINA_MAX])
+		lines.append("敌军：%d" % enemy_sprites.size())
 		lines.append("等级：lv.%d（最高 5）" % cell_levels[0])
 		lines.append("大小：缩放 %.2f，直径约 %.0f 像素" % [cell_sprites[0].scale.x, diameter])
 		lines.append("存活：%.1f 秒" % cell_ages[0])
@@ -396,7 +412,7 @@ func _build_ui() -> void:
 	stamina_bar.show_percentage = false
 	stamina_bar.custom_minimum_size = Vector2(220, 18)
 	box.add_child(stamina_bar)
-	label_hint = _make_label(box, "WASD 移动青色主控细胞，空格加速耗体力")
+	label_hint = _make_label(box, "3级敌军游荡，4级加速增殖，先到50胜！")
 
 func _make_label(parent: Control, text: String) -> Label:
 	var label := Label.new()
@@ -407,6 +423,7 @@ func _make_label(parent: Control, text: String) -> Label:
 
 func _connect_signals() -> void:
 	EventBus.cell_count_changed.connect(_on_cell_count_changed)
+	EventBus.enemy_count_changed.connect(_on_enemy_count_changed)
 	EventBus.env_changed.connect(_on_env_changed)
 	EventBus.level_changed.connect(_on_level_changed)
 	EventBus.ending_triggered.connect(_on_ending_triggered)
@@ -534,6 +551,126 @@ func _update_level_labels() -> void:
 	for i in range(cell_sprites.size()):
 		cell_level_labels[i].position = cell_sprites[i].position + Vector2(-14, -36)
 
+# ---- 敌方 ----
+# 逻辑层敌军涨数只攒进池子，画面按 0.3~0.6 秒一个滴出来（比增殖快，基本跟得上）
+func _on_enemy_count_changed(count: int) -> void:
+	_enemy_pending = maxi(count - _enemy_spawned_total, 0)
+	while _enemy_spawned_total > count and not enemy_sprites.is_empty():
+		_remove_enemy_at(enemy_sprites.size() - 1)
+		_enemy_spawned_total -= 1
+
+func _update_enemy_spawning(delta: float) -> void:
+	if _enemy_pending <= 0:
+		return
+	if enemy_sprites.size() >= MAX_VISUAL:
+		_enemy_pending = 0
+		return
+	_enemy_spawn_timer += delta
+	if _enemy_spawn_timer < _enemy_next_in:
+		return
+	_enemy_spawn_timer = 0.0
+	_enemy_next_in = rng.randf_range(0.3, 0.6)
+	_spawn_enemy()
+	_enemy_pending -= 1
+	_enemy_spawned_total += 1
+
+# 出生一个敌军：红色，同尺寸，随机方向，速度按当前模式（游荡慢 / 围堵快）
+func _spawn_enemy() -> void:
+	var sp := Sprite2D.new()
+	sp.texture = cell_texture
+	sp.position = _find_free_spot()
+	sp.scale = Vector2.ONE * CELL_MAX_SCALE * 0.1
+	sp.modulate = Color(1.0, 0.45, 0.45)
+	cell_layer.add_child(sp)
+	enemy_sprites.append(sp)
+	enemy_ages.append(0.0)
+	var ang: float = rng.randf_range(0.0, TAU)
+	enemy_vels.append(Vector2(cos(ang), sin(ang)) * GameManager.enemy_speed())
+
+# 敌军出生渐变：和我方一样由小到大，年龄照计
+func _grow_enemies(delta: float) -> void:
+	for i in range(enemy_sprites.size()):
+		enemy_ages[i] += delta
+		if enemy_ages[i] >= GROW_TIME:
+			continue
+		var t: float = clampf(enemy_ages[i] / GROW_TIME, 0.0, 1.0)
+		var smooth: float = t * t * (3.0 - 2.0 * t)
+		var s: float = CELL_MAX_SCALE * (0.1 + 0.9 * smooth)
+		enemy_sprites[i].scale = Vector2(s, s)
+
+# 敌方移动：游荡沿直线，围堵追最近的我方细胞（带一点摆动形成包围感）
+func _move_enemies(delta: float) -> void:
+	var speed: float = GameManager.enemy_speed()
+	var hunting: bool = GameManager.enemy_hunting()
+	_enemy_time += delta
+	var max_center: float = DISH_RADIUS - CELL_RADIUS
+	for i in range(enemy_sprites.size()):
+		var e: Sprite2D = enemy_sprites[i]
+		if hunting and not cell_sprites.is_empty():
+			var target: Vector2 = _nearest_player_pos(e.position)
+			var want: Vector2 = target - e.position
+			if want.length() > 1.0:
+				var dir: Vector2 = want.normalized()
+				var perp := Vector2(-dir.y, dir.x)
+				var wobble: float = 0.35 * sin(_enemy_time * 3.0 + float(i) * 1.7)
+				enemy_vels[i] = (dir + perp * wobble).normalized() * speed
+		e.position += enemy_vels[i] * delta
+		var dist: float = e.position.length()
+		if dist > max_center:
+			var n: Vector2 = e.position / dist
+			e.position = n * max_center
+			var v: Vector2 = enemy_vels[i]
+			var rv: Vector2 = v - 2.0 * v.dot(n) * n
+			if rv.length() > 0.001:
+				enemy_vels[i] = rv.normalized() * v.length()
+
+# 离 epos 最近的我方细胞位置
+func _nearest_player_pos(epos: Vector2) -> Vector2:
+	var best: Vector2 = cell_sprites[0].position
+	var best_d: float = epos.distance_to(best)
+	for k in range(1, cell_sprites.size()):
+		var d: float = epos.distance_to(cell_sprites[k].position)
+		if d < best_d:
+			best_d = d
+			best = cell_sprites[k].position
+	return best
+
+# 敌军之间只推开不换速，避免叠罗汉
+func _separate_enemies() -> void:
+	var min_dist: float = CELL_RADIUS * 2.0
+	for i in range(enemy_sprites.size()):
+		for j in range(i + 1, enemy_sprites.size()):
+			var d: Vector2 = enemy_sprites[i].position - enemy_sprites[j].position
+			var dist: float = d.length()
+			if dist < 0.001 or dist >= min_dist:
+				continue
+			var n: Vector2 = d / dist
+			var overlap: float = (min_dist - dist) * 0.5
+			enemy_sprites[i].position += n * overlap
+			enemy_sprites[j].position -= n * overlap
+
+# 敌我接触不结算：敌方只出现、不造成伤害，穿过我方细胞继续游荡/围堵
+
+func _remove_enemy_at(i: int) -> void:
+	var sp: Sprite2D = enemy_sprites[i]
+	enemy_sprites.remove_at(i)
+	enemy_vels.remove_at(i)
+	enemy_ages.remove_at(i)
+	sp.queue_free()
+	_enemy_spawned_total -= 1
+
+# 清空敌军画面与调度（重开 / 退出菜单时用）
+func _clear_enemies() -> void:
+	for sp in enemy_sprites:
+		sp.queue_free()
+	enemy_sprites.clear()
+	enemy_vels.clear()
+	enemy_ages.clear()
+	_enemy_pending = 0
+	_enemy_spawned_total = 0
+	_enemy_spawn_timer = 0.0
+	_enemy_next_in = 0.0
+
 # 在培养皿圆内找一个与其他细胞不重叠的出生点，最多试 20 次
 func _find_free_spot() -> Vector2:
 	var min_sep: float = CELL_RADIUS * 2.4
@@ -543,6 +680,10 @@ func _find_free_spot() -> Vector2:
 		var ok := true
 		for sp in cell_sprites:
 			if p.distance_to(sp.position) < min_sep:
+				ok = false
+				break
+		for ep in enemy_sprites:
+			if p.distance_to(ep.position) < min_sep:
 				ok = false
 				break
 		if ok:
