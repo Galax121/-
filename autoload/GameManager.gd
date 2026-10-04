@@ -7,6 +7,7 @@ const CellSystemScript: GDScript = preload("res://systems/CellSystemStub.gd")
 const EnvironmentSystemScript: GDScript = preload("res://systems/EnvironmentSystemStub.gd")
 const SkillSystemScript: GDScript = preload("res://systems/SkillSystemStub.gd")
 const EndingSystemScript: GDScript = preload("res://systems/EndingSystemStub.gd")
+const EnemySystemScript: GDScript = preload("res://systems/EnemySystemStub.gd")
 
 var current_state: int = GameState.SELECT
 var elapsed: float = 0.0
@@ -20,6 +21,7 @@ var cell_system = null
 var environment_system = null
 var skill_system = null
 var ending_system = null
+var enemy_system = null
 
 func _ready() -> void:
 	if cell_system == null:
@@ -30,10 +32,13 @@ func _ready() -> void:
 		skill_system = SkillSystemScript.new()
 	if ending_system == null:
 		ending_system = EndingSystemScript.new()
+	if enemy_system == null:
+		enemy_system = EnemySystemScript.new()
 	cell_system.init()
 	environment_system.init()
 	skill_system.init()
 	ending_system.init()
+	enemy_system.init()
 	_change_state(GameState.SELECT)
 	print("[GameManager] 游戏启动，当前状态 = SELECT（自动选细胞）")
 
@@ -46,6 +51,7 @@ func _process(delta: float) -> void:
 	elapsed += delta
 	state_timer += delta
 	_tick_current(delta)
+	_update_enemy_director()
 	if _check_ending():
 		return
 	_update_state_flow()
@@ -57,14 +63,17 @@ func _tick_current(delta: float) -> void:
 		GameState.GROW:
 			cell_system.tick(delta)
 			skill_system.tick(delta)
+			enemy_system.tick(delta)
 		GameState.ENV:
 			cell_system.tick(delta)
 			skill_system.tick(delta)
 			environment_system.tick(delta)
+			enemy_system.tick(delta)
 		GameState.ENEMY:
 			cell_system.tick(delta)
 			skill_system.tick(delta)
 			environment_system.tick(delta)
+			enemy_system.tick(delta)
 			print("[GameManager] 敌人出现（占位）... 当前细胞数 = %d" % get_cell_count())
 
 func _update_state_flow() -> void:
@@ -82,11 +91,8 @@ func _update_state_flow() -> void:
 				print("[GameManager] 环境变化完成，进入 ENEMY")
 				_change_state(GameState.ENEMY)
 		GameState.ENEMY:
-			if state_timer >= 15.0:
-				if get_cell_count() > 30:
-					_trigger_ending("player_win")
-				else:
-					_trigger_ending("draw")
+			# 敌对阶段不设超时，唯一胜利就是细胞数>50，由 _check_ending 判定
+			pass
 
 func _check_ending() -> bool:
 	if ending_system != null and ending_system.has_method("check_ending"):
@@ -117,6 +123,7 @@ func start_game() -> void:
 	environment_system.init()
 	skill_system.init()
 	ending_system.init()
+	enemy_system.init()
 	elapsed = 0.0
 	ending_id = ""
 	started = true
@@ -127,6 +134,31 @@ func start_game() -> void:
 func stop_to_menu() -> void:
 	started = false
 	print("[GameManager] 退出到菜单，模拟暂停")
+
+# 敌方导演：主控3级放敌军游荡，主控4级转围堵（每帧检查一次）
+func _update_enemy_director() -> void:
+	if enemy_system == null:
+		return
+	if not enemy_system.get("active") and get_level() >= 3:
+		enemy_system.activate()
+	if not enemy_system.get("hunting") and get_level() >= 4:
+		enemy_system.set_hunt(true)
+
+# 替换接口：敌方系统以后换真 AI 时调这个注入
+func set_enemy_system(system) -> void:
+	enemy_system = system
+
+# 只读：敌军当前移速（供 Main.gd 画面用）
+func enemy_speed() -> float:
+	if enemy_system != null and enemy_system.has_method("current_speed"):
+		return float(enemy_system.current_speed())
+	return 30.0
+
+# 只读：是否围堵中（供 Main.gd 画面用）
+func enemy_hunting() -> bool:
+	if enemy_system != null:
+		return enemy_system.get("hunting") == true
+	return false
 
 func state_to_string(state: int) -> String:
 	match state:
