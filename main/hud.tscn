@@ -1,0 +1,30 @@
+[gd_scene format=3 uid="uid://bp7w4kavnuk8s"]
+
+[ext_resource type="Script" uid="uid://c31oxb3rkjvu4" path="res://main/HpHud.gd" id="1_gljsp"]
+
+[node name="Hud" type="CanvasLayer" unique_id=229735238]
+script = ExtResource("1_gljsp")
+
+[node name="Number" type="Label" parent="." unique_id=226528146]
+offset_right = 40.0
+offset_bottom = 23.0
+
+[node name="Level" type="Label" parent="." unique_id=1256313326]
+offset_right = 40.0
+offset_bottom = 23.0
+
+[node name="Temperature" type="Label" parent="." unique_id=992006200]
+offset_right = 40.0
+offset_bottom = 23.0
+
+[node name="pH" type="Label" parent="." unique_id=1482498268]
+offset_right = 40.0
+offset_bottom = 23.0
+
+[node name="ProgressBar" type="ProgressBar" parent="." unique_id=2080720623]
+offset_right = 4.0
+offset_bottom = 27.0
+
+[node name="HpLabel" type="Label" parent="." unique_id=881235641]
+offset_right = 40.0
+offset_bottom = 23.0
