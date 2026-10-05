@@ -4,7 +4,6 @@
 [ext_resource type="PackedScene" uid="uid://bakjkikwjmoti" path="res://main/mainmenu.tscn" id="2_wbnyf"]
 [ext_resource type="Script" uid="uid://p35voiyf573i" path="res://systems/CellCombatStats.gd" id="3_5kcm4"]
 [ext_resource type="Script" uid="uid://dkrvtt1l4hnac" path="res://main/HudBars.gd" id="4_cmtxc"]
-[ext_resource type="Script" uid="uid://c31oxb3rkjvu4" path="res://main/HpHud.gd" id="5_tv7ag"]
 
 [node name="Main" type="Node2D" unique_id=634056561]
 script = ExtResource("1")
@@ -17,6 +16,7 @@ script = ExtResource("1")
 script = ExtResource("3_5kcm4")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1272927485]
+visible = false
 script = ExtResource("4_cmtxc")
 
 [node name="MPBar" type="ProgressBar" parent="CanvasLayer" unique_id=627344487]
@@ -34,10 +34,3 @@ offset_bottom = 23.0
 [node name="HPBar" type="ProgressBar" parent="CanvasLayer" unique_id=1708946461]
 offset_right = 4.0
 offset_bottom = 27.0
-
-[node name="HPLayer" type="CanvasLayer" parent="." unique_id=458245649]
-script = ExtResource("5_tv7ag")
-
-[node name="HpLabel" type="Label" parent="HPLayer" unique_id=1747965457]
-offset_right = 40.0
-offset_bottom = 23.0
