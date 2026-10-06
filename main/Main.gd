@@ -14,11 +14,14 @@ extends Node2D
 
 var label_state: Label
 var label_cells: Label
+var label_enemy: Label
 var label_level: Label
 var label_env: Label
 var label_ending: Label
 var label_hint: Label
 var stamina_bar: ProgressBar
+# 敌人阶段横幅：平时藏着，敌军出现/围堵时才弹顶屏提示
+var label_enemy_alert: Label
 
 # 左上角数值区容器，菜单阶段先藏起来，点开始后再出现
 var stats_box: VBoxContainer
@@ -29,6 +32,12 @@ var menu_layer: CanvasLayer
 var pause_layer: CanvasLayer
 var pause_btn: Button
 var pause_menu: CenterContainer
+# 倍速相关：右上角倍速键 + 速度单浮层（常开进程，定住也能点）
+var speed_layer: CanvasLayer
+var speed_btn: Button
+var speed_menu: CenterContainer
+# 可选倍速：点中后整局按该倍速跑
+const SPEEDS: Array[float] = [0.5, 1.0, 1.5, 2.0, 3.0]
 # 状态浮层：显示主控所有数值，点任意处回到暂停菜单
 var state_overlay: CanvasLayer
 var state_label: Label
@@ -61,13 +70,18 @@ const MAIN_DRIFT_SPEED: float = 22.0
 const STAMINA_MAX: float = 100.0
 const STAMINA_DRAIN: float = 30.0
 const STAMINA_REGEN: float = 12.0
-# 其它细胞：移动速度与主控相同，出生后每隔这么久升1级（与主控升级速度相近）
-const OTHER_LEVEL_UP_TIME: float = 4.0
-# 外观参数：所有细胞最大形态统一，出生后用这么久长到最大
+# 其它细胞：移动速度与主控相同，出生后每隔这么久升1级（与主控同为40秒一级）
+const OTHER_LEVEL_UP_TIME: float = 40.0
+# 外观参数：其它细胞最大形态统一，主控比它们大一档，出生后用这么久长满
 const CELL_MAX_SCALE: float = 0.8
+const MAIN_MAX_SCALE: float = 1.0
 const GROW_TIME: float = 0.6
 # 培养皿半径（相对 cell_layer 原点），细胞圆心活动范围 = 半径 - 细胞半径
 const DISH_RADIUS: float = 280.0
+# 敌方出生位点：主控3级时只在这三个点附近冒出来；4级后全图自由生成
+const ENEMY_SPAWN_POINTS: Array[Vector2] = [Vector2(-150, -100), Vector2(150, -100), Vector2(0, 150)]
+# 3级拴绳半径：没围堵时敌军只能在家附近打转，出绳就弹回
+const ENEMY_TETHER_RADIUS: float = 70.0
 
 # 体力：加速按住空格才扣，平时缓慢恢复
 var stamina: float = STAMINA_MAX
@@ -83,18 +97,22 @@ var _enemy_spawned_total: int = 0
 var _enemy_spawn_timer: float = 0.0
 var _enemy_next_in: float = 0.0
 var _enemy_time: float = 0.0
+# 每个敌军的家（3级出生位点），4级围堵后不再拴绳
+var enemy_homes: Array[Vector2] = []
 
 func _ready() -> void:
 	rng.randomize()
 	_build_cell_layer()
 	_build_ui()
 	_build_pause_ui()
+	_build_speed_ui()
 	_connect_signals()
 	# 菜单阶段：藏起培养皿、数值和暂停键，只留菜单；游戏等点开始才跑
 	menu_layer = $MainMenuLayer
 	cell_layer.visible = false
 	stats_box.visible = false
 	pause_layer.visible = false
+	speed_layer.visible = false
 	_connect_menu()
 	_refresh_all()
 	print("[Main] UI 初始化完成，已订阅 EventBus")
@@ -112,6 +130,9 @@ func _connect_menu() -> void:
 func _on_start_pressed() -> void:
 	get_viewport().gui_release_focus()
 	get_tree().paused = false
+	Engine.time_scale = 1.0
+	speed_menu.visible = false
+	_update_speed_btn()
 	if menu_layer != null:
 		menu_layer.visible = false
 	pause_menu.visible = false
@@ -123,6 +144,7 @@ func _on_start_pressed() -> void:
 	cell_layer.visible = true
 	stats_box.visible = true
 	pause_layer.visible = true
+	speed_layer.visible = true
 	GameManager.start_game()
 	_refresh_all()
 
@@ -159,6 +181,7 @@ func _process(delta: float) -> void:
 	_separate_enemies()
 	_update_other_levels(delta)
 	_update_level_labels()
+	_update_realtime_labels()
 
 # ---- 暂停菜单 ----
 # 右上角暂停键 + 居中弹窗（继续 / 状态 / 退出游戏），暂停层常开进程所以定住也能点
@@ -226,6 +249,74 @@ func _build_pause_ui() -> void:
 	center.add_child(state_label)
 	catcher.pressed.connect(_on_state_return)
 
+# ---- 倍速 ----
+# 右上角倍速键 + 速度单：点开定住选速度，选中按对应倍速跑，点空白处直接回去
+func _build_speed_ui() -> void:
+	speed_layer = CanvasLayer.new()
+	speed_layer.name = "SpeedLayer"
+	speed_layer.layer = 7
+	speed_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(speed_layer)
+	speed_btn = _make_button("1.0x", 24)
+	speed_btn.anchor_left = 1.0
+	speed_btn.anchor_right = 1.0
+	speed_btn.offset_left = -300.0
+	speed_btn.offset_right = -170.0
+	speed_btn.offset_top = 20.0
+	speed_btn.offset_bottom = 68.0
+	speed_layer.add_child(speed_btn)
+	speed_btn.pressed.connect(_on_speed_pressed)
+	speed_menu = CenterContainer.new()
+	speed_menu.name = "SpeedMenu"
+	speed_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	speed_menu.visible = false
+	speed_layer.add_child(speed_menu)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.5)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	speed_menu.add_child(dim)
+	# 全屏隐形按钮接住空白点击，直接回游戏（速度保持刚才选的）
+	var catcher := Button.new()
+	catcher.flat = true
+	catcher.text = ""
+	catcher.focus_mode = Control.FOCUS_NONE
+	catcher.set_anchors_preset(Control.PRESET_FULL_RECT)
+	speed_menu.add_child(catcher)
+	var panel := PanelContainer.new()
+	speed_menu.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	panel.add_child(box)
+	for s in SPEEDS:
+		var b := _make_button("%.1fx" % s, 28)
+		box.add_child(b)
+		b.pressed.connect(_on_speed_chosen.bind(s))
+	catcher.pressed.connect(_on_speed_return)
+
+# 点倍速键：定住并弹速度单（同时收起暂停菜单防叠在一起）
+func _on_speed_pressed() -> void:
+	pause_menu.visible = false
+	get_tree().paused = true
+	speed_menu.visible = true
+
+# 选中某档：整局按该倍速跑，收单继续
+func _on_speed_chosen(value: float) -> void:
+	Engine.time_scale = value
+	_update_speed_btn()
+	speed_menu.visible = false
+	pause_menu.visible = false
+	get_tree().paused = false
+
+# 点空白处：不换挡，直接回游戏
+func _on_speed_return() -> void:
+	speed_menu.visible = false
+	pause_menu.visible = false
+	get_tree().paused = false
+
+func _update_speed_btn() -> void:
+	speed_btn.text = "%.1fx" % Engine.time_scale
+
 # 做一个中文字体可用的按钮：去焦点（防空格误触）+ 系统中文字体
 func _make_button(text: String, font_size: int) -> Button:
 	var btn := Button.new()
@@ -245,6 +336,7 @@ func _apply_font(label: Label, font_size: int) -> void:
 
 # 点暂停键：定住整局（含细胞和计时），弹出菜单
 func _on_pause_pressed() -> void:
+	speed_menu.visible = false
 	get_tree().paused = true
 	pause_menu.visible = true
 
@@ -269,7 +361,12 @@ func _on_quit_to_menu() -> void:
 	get_tree().paused = false
 	pause_menu.visible = false
 	state_overlay.visible = false
+	Engine.time_scale = 1.0
+	speed_menu.visible = false
+	_update_speed_btn()
 	pause_layer.visible = false
+	speed_layer.visible = false
+	label_enemy_alert.visible = false
 	cell_layer.visible = false
 	stats_box.visible = false
 	_clear_cells()
@@ -401,6 +498,7 @@ func _build_ui() -> void:
 	stats_box = box
 	label_state = _make_label(box, "状态: -")
 	label_cells = _make_label(box, "细胞数量: -")
+	label_enemy = _make_label(box, "敌军数量: -")
 	label_level = _make_label(box, "等级: -")
 	label_env = _make_label(box, "环境温度: -")
 	label_ending = _make_label(box, "结局: -")
@@ -412,7 +510,20 @@ func _build_ui() -> void:
 	stamina_bar.show_percentage = false
 	stamina_bar.custom_minimum_size = Vector2(220, 18)
 	box.add_child(stamina_bar)
-	label_hint = _make_label(box, "3级敌军游荡，4级加速增殖，先到50胜！")
+	label_hint = _make_label(box, "目标50胜！升级40秒一级，3级出敌军")
+	# 顶屏横幅：平时藏着，只在敌军出现/围堵时显示
+	label_enemy_alert = Label.new()
+	label_enemy_alert.text = "敌军出现！"
+	_apply_font(label_enemy_alert, 40)
+	label_enemy_alert.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+	label_enemy_alert.anchor_left = 0.5
+	label_enemy_alert.anchor_right = 0.5
+	label_enemy_alert.offset_left = -300.0
+	label_enemy_alert.offset_right = 300.0
+	label_enemy_alert.offset_top = 24.0
+	label_enemy_alert.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label_enemy_alert.visible = false
+	layer.add_child(label_enemy_alert)
 
 func _make_label(parent: Control, text: String) -> Label:
 	var label := Label.new()
@@ -445,9 +556,14 @@ func _on_cell_count_changed(count: int) -> void:
 		_spawned_total -= 1
 	_update_count_label()
 
-# 左上角细胞数量显示场上实际总数
+# 左上角细胞数量显示场上实际总数 / 胜利线（胜利线读结局系统，不在两处硬写）
 func _update_count_label() -> void:
-	label_cells.text = "细胞数量: %d" % cell_sprites.size()
+	var target := 50
+	if GameManager.ending_system != null:
+		var w = GameManager.ending_system.get("win_cell_count")
+		if w != null:
+			target = int(w)
+	label_cells.text = "细胞数量：%d/%d" % [cell_sprites.size(), target]
 
 # 出生调度：第一个永远是主控；其它细胞主控2级后才随机滴出来（0.15~0.4 秒一个）
 func _update_spawning(delta: float) -> void:
@@ -475,8 +591,8 @@ func _spawn_one_cell() -> void:
 	var sp := Sprite2D.new()
 	sp.texture = cell_texture
 	sp.position = _find_free_spot()
-	# 出生时很小，随后在 _grow_cells 里长到统一的最大尺寸
-	sp.scale = Vector2.ONE * CELL_MAX_SCALE * 0.1
+	# 出生时很小，主控长到更大，随后在 _grow_cells 里各自长满
+	sp.scale = Vector2.ONE * (MAIN_MAX_SCALE if is_main else CELL_MAX_SCALE) * 0.1
 	if is_main:
 		sp.modulate = Color(0.65, 1.0, 1.0)
 	else:
@@ -529,10 +645,11 @@ func _grow_cells(delta: float) -> void:
 			continue
 		var t: float = clampf(cell_ages[i] / GROW_TIME, 0.0, 1.0)
 		var smooth: float = t * t * (3.0 - 2.0 * t)
-		var s: float = CELL_MAX_SCALE * (0.1 + 0.9 * smooth)
+		var max_s: float = MAIN_MAX_SCALE if i == 0 else CELL_MAX_SCALE
+		var s: float = max_s * (0.1 + 0.9 * smooth)
 		cell_sprites[i].scale = Vector2(s, s)
 
-# 其它细胞升级：存活每满 4 秒升 1 级，上限为主控当前等级减一（至少 1 级）
+# 其它细胞升级：存活每满 40 秒升 1 级，上限为主控当前等级减一（至少 1 级）
 # 主控等级直接跟技能系统走（最高 5 级已在 SkillSystemStub 里封顶）
 func _update_other_levels(_delta: float) -> void:
 	var main_lv: int = mini(GameManager.get_level(), 5)
@@ -554,6 +671,7 @@ func _update_level_labels() -> void:
 # ---- 敌方 ----
 # 逻辑层敌军涨数只攒进池子，画面按 0.3~0.6 秒一个滴出来（比增殖快，基本跟得上）
 func _on_enemy_count_changed(count: int) -> void:
+	label_enemy.text = "敌军数量：%d" % count
 	_enemy_pending = maxi(count - _enemy_spawned_total, 0)
 	while _enemy_spawned_total > count and not enemy_sprites.is_empty():
 		_remove_enemy_at(enemy_sprites.size() - 1)
@@ -574,18 +692,49 @@ func _update_enemy_spawning(delta: float) -> void:
 	_enemy_pending -= 1
 	_enemy_spawned_total += 1
 
-# 出生一个敌军：红色，同尺寸，随机方向，速度按当前模式（游荡慢 / 围堵快）
+# 出生一个敌军：红色，同尺寸。3级在家附近冒出来，4级围堵后全图自由生成
 func _spawn_enemy() -> void:
+	var hunting: bool = GameManager.enemy_hunting()
+	var home := Vector2.ZERO
+	var pos: Vector2
+	if hunting:
+		pos = _find_free_spot()
+	else:
+		home = ENEMY_SPAWN_POINTS[rng.randi_range(0, ENEMY_SPAWN_POINTS.size() - 1)]
+		pos = _find_spot_near(home)
 	var sp := Sprite2D.new()
 	sp.texture = cell_texture
-	sp.position = _find_free_spot()
+	sp.position = pos
 	sp.scale = Vector2.ONE * CELL_MAX_SCALE * 0.1
 	sp.modulate = Color(1.0, 0.45, 0.45)
 	cell_layer.add_child(sp)
 	enemy_sprites.append(sp)
 	enemy_ages.append(0.0)
+	enemy_homes.append(home)
 	var ang: float = rng.randf_range(0.0, TAU)
 	enemy_vels.append(Vector2(cos(ang), sin(ang)) * GameManager.enemy_speed())
+
+# 在家附近找出生点：半径 35 内试 10 次，避开已有细胞，实在没位就直接放
+func _find_spot_near(home: Vector2) -> Vector2:
+	var min_sep: float = CELL_RADIUS * 2.4
+	var max_r: float = DISH_RADIUS - CELL_RADIUS - 4.0
+	for i in range(10):
+		var p: Vector2 = home + Vector2(rng.randf_range(-35.0, 35.0), rng.randf_range(-35.0, 35.0))
+		if p.length() > max_r:
+			p = p.normalized() * max_r
+		var ok := true
+		for sp in cell_sprites:
+			if p.distance_to(sp.position) < min_sep:
+				ok = false
+				break
+		if ok:
+			for ep in enemy_sprites:
+				if p.distance_to(ep.position) < min_sep:
+					ok = false
+					break
+		if ok:
+			return p
+	return home
 
 # 敌军出生渐变：和我方一样由小到大，年龄照计
 func _grow_enemies(delta: float) -> void:
@@ -623,6 +772,16 @@ func _move_enemies(delta: float) -> void:
 			var rv: Vector2 = v - 2.0 * v.dot(n) * n
 			if rv.length() > 0.001:
 				enemy_vels[i] = rv.normalized() * v.length()
+		# 3级拴绳：没围堵时离家超过绳长就拉回并反弹，4级后自由行动
+		if not hunting:
+			var leash: Vector2 = e.position - enemy_homes[i]
+			if leash.length() > ENEMY_TETHER_RADIUS:
+				var ln: Vector2 = leash.normalized()
+				e.position = enemy_homes[i] + ln * ENEMY_TETHER_RADIUS
+				var vv: Vector2 = enemy_vels[i]
+				var rvv: Vector2 = vv - 2.0 * vv.dot(ln) * ln
+				if rvv.length() > 0.001:
+					enemy_vels[i] = rvv.normalized() * vv.length()
 
 # 离 epos 最近的我方细胞位置
 func _nearest_player_pos(epos: Vector2) -> Vector2:
@@ -656,6 +815,7 @@ func _remove_enemy_at(i: int) -> void:
 	enemy_sprites.remove_at(i)
 	enemy_vels.remove_at(i)
 	enemy_ages.remove_at(i)
+	enemy_homes.remove_at(i)
 	sp.queue_free()
 	_enemy_spawned_total -= 1
 
@@ -666,6 +826,7 @@ func _clear_enemies() -> void:
 	enemy_sprites.clear()
 	enemy_vels.clear()
 	enemy_ages.clear()
+	enemy_homes.clear()
 	_enemy_pending = 0
 	_enemy_spawned_total = 0
 	_enemy_spawn_timer = 0.0
@@ -756,6 +917,32 @@ func _collide_cells() -> void:
 			if i == 0 and nv1.length() > MAIN_BASE_SPEED * MAIN_SPRINT_MULT:
 				cell_vels[0] = nv1.normalized() * MAIN_BASE_SPEED * MAIN_SPRINT_MULT
 
+# 实时状态行：等级倒计时 + 敌军模式，每帧刷新，与当前设置对齐
+func _update_realtime_labels() -> void:
+	var lv: int = mini(GameManager.get_level(), 5)
+	label_level.text = "等级：%d" % lv
+	var active := false
+	if GameManager.enemy_system != null:
+		active = GameManager.enemy_system.get("active") == true
+	var mode := "未出现"
+	if GameManager.enemy_hunting():
+		mode = "围堵中"
+	elif active:
+		mode = "游荡中"
+	label_enemy.text = "敌军数量：%d（%s）" % [enemy_sprites.size(), mode]
+	if GameManager.enemy_hunting():
+		label_enemy_alert.text = "敌军围堵中！"
+		label_enemy_alert.visible = true
+	elif active:
+		label_enemy_alert.text = "敌军出现！"
+		label_enemy_alert.visible = true
+	else:
+		label_enemy_alert.visible = false
+	if label_enemy_alert.visible:
+		label_enemy_alert.modulate.a = 0.7 + 0.3 * sin(Time.get_ticks_msec() / 300.0)
+	# 状态行：状态机已按新节奏重排，直接显示中文名（敌军细节看横幅和敌军行）
+	label_state.text = "状态：" + _state_display_name(GameManager.state_to_string(GameManager.current_state))
+
 func _on_env_changed(name: String, value: float) -> void:
 	label_env.text = "环境 %s: %.1f" % [name, value]
 
@@ -770,4 +957,19 @@ func _on_ending_triggered(ending_id: String) -> void:
 	label_ending.text = "结局: %s" % desc
 
 func _on_game_state_changed(state: String) -> void:
-	label_state.text = "状态: %s" % state
+	label_state.text = "状态：" + _state_display_name(state)
+
+# 状态机中文名：SELECT准备 / GROW成长期 / ENV发展期 / ENEMY敌军期 / END已结束
+func _state_display_name(state: String) -> String:
+	match state:
+		"SELECT":
+			return "准备"
+		"GROW":
+			return "成长期"
+		"ENV":
+			return "发展期"
+		"ENEMY":
+			return "敌军期"
+		"END":
+			return "已结束"
+	return state

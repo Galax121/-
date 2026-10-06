@@ -9,7 +9,7 @@ extends "res://core/ICellSystem.gd"
 # 当前敌军总数
 var enemy_count: int = 0
 # 与 CellSystemStub.growth_per_sec 保持一致
-var growth_per_sec: float = 1.5
+var growth_per_sec: float = 0.22
 # 是否已登场 / 是否围堵中
 var active: bool = false
 var hunting: bool = false
@@ -23,7 +23,7 @@ var _accum: float = 0.0
 func init() -> void:
 	enemy_count = 0
 	_accum = 0.0
-	growth_per_sec = 1.5
+	growth_per_sec = 0.22
 	active = false
 	hunting = false
 	print("[EnemySystemStub] init，等待主控3级激活")
@@ -50,7 +50,7 @@ func activate() -> void:
 func set_hunt(on: bool = true) -> void:
 	hunting = on
 	if hunting:
-		growth_per_sec = 4.0
+		growth_per_sec = 0.6
 		print("[EnemySystemStub] 敌方加速围堵，增殖提速！")
 
 # 当前移速：Main.gd 画面每帧读这个走

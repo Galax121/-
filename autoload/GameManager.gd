@@ -76,22 +76,23 @@ func _tick_current(delta: float) -> void:
 			enemy_system.tick(delta)
 			print("[GameManager] 敌人出现（占位）... 当前细胞数 = %d" % get_cell_count())
 
+# 状态流转（新节奏）：准备2秒 → 成长期（主控2级前）→ 发展期（3级敌军登场前）
+# → 敌军期（直到50胜）。胜利只由 _check_ending 判，超时不再强制结算
 func _update_state_flow() -> void:
 	match current_state:
 		GameState.SELECT:
 			if state_timer >= 2.0:
-				print("[GameManager] 自动选择细胞完成，进入 GROW")
+				print("[GameManager] 准备完成，进入成长期 GROW")
 				_change_state(GameState.GROW)
 		GameState.GROW:
-			if get_cell_count() >= 10 or state_timer >= 10.0:
-				print("[GameManager] 成长阶段完成，进入 ENV")
+			if get_level() >= 2:
+				print("[GameManager] 主控2级，进入发展期 ENV")
 				_change_state(GameState.ENV)
 		GameState.ENV:
-			if state_timer >= 10.0:
-				print("[GameManager] 环境变化完成，进入 ENEMY")
+			if get_level() >= 3:
+				print("[GameManager] 主控3级，敌军登场，进入敌军期 ENEMY")
 				_change_state(GameState.ENEMY)
 		GameState.ENEMY:
-			# 敌对阶段不设超时，唯一胜利就是细胞数>50，由 _check_ending 判定
 			pass
 
 func _check_ending() -> bool:
