@@ -54,9 +54,14 @@ func _build_help() -> void:
 	label.text = "操作说明\n\nWASD / 方向键：移动青色主控细胞\n空格：加速（消耗体力）\n松开空格：缓慢恢复体力\n\n点击任意处返回菜单"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	var sys_font := SystemFont.new()
-	sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
-	label.add_theme_font_override("font", sys_font)
+	var help_font: Font = null
+	if ResourceLoader.exists("res://main/字体/NanoTikBazHei-Bold.ttf"):
+		help_font = load("res://main/字体/NanoTikBazHei-Bold.ttf")
+	else:
+		var sys_font := SystemFont.new()
+		sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
+		help_font = sys_font
+	label.add_theme_font_override("font", help_font)
 	label.add_theme_font_size_override("font_size", 32)
 	center.add_child(label)
 	catcher.pressed.connect(_on_help_return)

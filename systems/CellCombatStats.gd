@@ -1,5 +1,7 @@
 # CellCombatStats.gd —— 细胞战斗数值（血量/经验/法力/攻击/防御）
 # 只动 systems/ 下自己的新文件，不改别人的脚本
+# 接入方式：Main.gd 持有主控份（CellCombatStats.new + init_main），每帧把等级/经验
+# 只读镜像进来；法力是独立属性，目前无消耗，只展示。屏幕下方三条从它读
 extends Node2D
 class_name CellCombatStats
 
@@ -74,38 +76,11 @@ func take_damage(amount: float) -> void:
 	hp = max(hp - real, 0.0)
 	# hp <= 0 时由外部判断死亡（kill_cell）
 
-# ---------- 每帧更新 ----------
-func _process(delta: float) -> void:
-	# --- MP 逻辑（只有主控）---
-	if kind == Kind.MAIN:
-		if accelerating:
-			mp -= 30.0 * delta
-			if mp <= 0.0:
-				mp = 0.0
-				accelerating = false
-		else:
-			mp = min(mp + 12.0 * delta, max_mp)
-
-	# --- 经验 / 等级 ---
-	if kind == Kind.MAIN:
-		# 主控：沿用现有技能系统，8/秒攒，20 起每级×1.5，5 级封顶
-		if level < 5:
-			exp += 8.0 * delta
-			if exp >= exp_to_next:
-				exp -= exp_to_next
-				level += 1
-				exp_to_next *= 1.5
-				apply_level_up()
-	elif kind == Kind.ALLY:
-		# 其它细胞：存活计时，4 秒 1 级，上限 = 主控等级 - 1（主控固定 5，敌军 0）
-		var cap: int = 4
-		if level < cap:
-			level_timer += delta
-			if level_timer >= 4.0:
-				level_timer = 0.0
-				level += 1
-				apply_level_up()
-	# 敌军不吃经验
+# ---------- 每帧更新（已停用）----------
+# 注意：升级/回蓝的权威在 SkillSystemStub（40秒一级）和 Main.gd 体力里，
+# 这里不再自己跑，避免两套 pacing 打架。本对象只存数 + 提供受伤公式。
+func _process(_delta: float) -> void:
+	pass
 
 # ---------- 升级属性成长 ----------
 func apply_level_up() -> void:

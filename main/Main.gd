@@ -20,6 +20,12 @@ var label_env: Label
 var label_ending: Label
 var label_hint: Label
 var stamina_bar: ProgressBar
+# 副A战斗属性：主控份数据对象（权威在技能系统/体力，这里只镜像）+ 底部三条
+var combat: CellCombatStats
+var bottom_box: VBoxContainer
+var hp_bar: ProgressBar
+var mp_bar: ProgressBar
+var exp_bar: ProgressBar
 # 敌人阶段横幅：平时藏着，敌军出现/围堵时才弹顶屏提示
 var label_enemy_alert: Label
 
@@ -102,8 +108,14 @@ var enemy_homes: Array[Vector2] = []
 
 func _ready() -> void:
 	rng.randomize()
+	# 副A数据对象：不在场景树里，只存数（它的 _process 已停用，不会跟现有系统打架）
+	combat = get_node_or_null("CellCombatStats")
+	if combat == null:
+		combat = CellCombatStats.new()
+	combat.init_main()
 	_build_cell_layer()
 	_build_ui()
+	_build_bottom_bars()
 	_build_pause_ui()
 	_build_speed_ui()
 	_connect_signals()
@@ -111,6 +123,7 @@ func _ready() -> void:
 	menu_layer = $MainMenuLayer
 	cell_layer.visible = false
 	stats_box.visible = false
+	bottom_box.visible = false
 	pause_layer.visible = false
 	speed_layer.visible = false
 	_connect_menu()
@@ -141,8 +154,11 @@ func _on_start_pressed() -> void:
 	_clear_enemies()
 	stamina = STAMINA_MAX
 	is_sprinting = false
+	if combat != null:
+		combat.init_main()
 	cell_layer.visible = true
 	stats_box.visible = true
+	bottom_box.visible = true
 	pause_layer.visible = true
 	speed_layer.visible = true
 	GameManager.start_game()
@@ -182,6 +198,7 @@ func _process(delta: float) -> void:
 	_update_other_levels(delta)
 	_update_level_labels()
 	_update_realtime_labels()
+	_sync_combat_bars()
 
 # ---- 暂停菜单 ----
 # 右上角暂停键 + 居中弹窗（继续 / 状态 / 退出游戏），暂停层常开进程所以定住也能点
@@ -322,17 +339,27 @@ func _make_button(text: String, font_size: int) -> Button:
 	var btn := Button.new()
 	btn.text = text
 	btn.focus_mode = Control.FOCUS_NONE
-	var sys_font := SystemFont.new()
-	sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
-	btn.add_theme_font_override("font", sys_font)
+	btn.add_theme_font_override("font", game_font())
 	btn.add_theme_font_size_override("font_size", font_size)
 	return btn
 
 func _apply_font(label: Label, font_size: int) -> void:
-	var sys_font := SystemFont.new()
-	sys_font.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
-	label.add_theme_font_override("font", sys_font)
+	label.add_theme_font_override("font", game_font())
 	label.add_theme_font_size_override("font_size", font_size)
+
+# 全局统一字体：副C的UI字体，加载一次复用，文件缺失时回退系统字体
+const UI_FONT_PATH: String = "res://main/字体/NanoTikBazHei-Bold.ttf"
+var _shared_font: Font = null
+
+func game_font() -> Font:
+	if _shared_font == null:
+		if ResourceLoader.exists(UI_FONT_PATH):
+			_shared_font = load(UI_FONT_PATH)
+		else:
+			var sys := SystemFont.new()
+			sys.font_names = PackedStringArray(["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans SC", "sans-serif"])
+			_shared_font = sys
+	return _shared_font
 
 # 点暂停键：定住整局（含细胞和计时），弹出菜单
 func _on_pause_pressed() -> void:
@@ -369,6 +396,7 @@ func _on_quit_to_menu() -> void:
 	label_enemy_alert.visible = false
 	cell_layer.visible = false
 	stats_box.visible = false
+	bottom_box.visible = false
 	_clear_cells()
 	_clear_enemies()
 	GameManager.stop_to_menu()
@@ -525,6 +553,76 @@ func _build_ui() -> void:
 	label_enemy_alert.visible = false
 	layer.add_child(label_enemy_alert)
 
+# 屏幕下方三条：血量（红）、法力（蓝＝体力）、经验（绿），读副A数据对象
+func _build_bottom_bars() -> void:
+	var blayer := CanvasLayer.new()
+	blayer.name = "BottomLayer"
+	add_child(blayer)
+	bottom_box = VBoxContainer.new()
+	bottom_box.name = "BottomBox"
+	bottom_box.anchor_left = 0.0
+	bottom_box.anchor_top = 1.0
+	bottom_box.anchor_right = 0.0
+	bottom_box.anchor_bottom = 1.0
+	bottom_box.offset_left = 20.0
+	bottom_box.offset_top = -150.0
+	bottom_box.offset_right = 440.0
+	bottom_box.offset_bottom = -20.0
+	bottom_box.add_theme_constant_override("separation", 6)
+	blayer.add_child(bottom_box)
+	hp_bar = _make_bar(Color(1.0, 0.32, 0.32))
+	mp_bar = _make_bar(Color(0.32, 0.6, 1.0))
+	exp_bar = _make_bar(Color(0.35, 0.9, 0.4))
+	_add_bar_row(bottom_box, "血量", hp_bar)
+	_add_bar_row(bottom_box, "法力", mp_bar)
+	_add_bar_row(bottom_box, "经验", exp_bar)
+
+func _add_bar_row(parent: Control, text: String, bar: ProgressBar) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	parent.add_child(row)
+	var lab := Label.new()
+	lab.text = text
+	lab.custom_minimum_size = Vector2(72, 0)
+	_apply_font(lab, 22)
+	row.add_child(lab)
+	row.add_child(bar)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+func _make_bar(fill: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 100.0
+	bar.value = 100.0
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(300, 20)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0, 0, 0, 0.55)
+	bg.set_corner_radius_all(6)
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = fill
+	fg.set_corner_radius_all(6)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fg)
+	return bar
+
+# 战斗属性同步：等级/经验只读镜像进副A对象；法力独立属性，目前无消耗，只展示
+func _sync_combat_bars() -> void:
+	if combat == null:
+		return
+	combat.level = mini(GameManager.get_level(), 5)
+	var sys = GameManager.skill_system
+	if sys != null and sys.has_method("get_upgrade_progress"):
+		var pg: Vector2 = sys.get_upgrade_progress()
+		combat.exp = pg.x
+		combat.exp_to_next = pg.y
+	hp_bar.max_value = combat.max_hp
+	hp_bar.value = combat.hp
+	mp_bar.max_value = combat.max_mp
+	mp_bar.value = combat.mp
+	exp_bar.max_value = combat.exp_to_next
+	exp_bar.value = combat.exp
+
 func _make_label(parent: Control, text: String) -> Label:
 	var label := Label.new()
 	label.text = text
@@ -616,6 +714,7 @@ func _spawn_one_cell() -> void:
 # 头顶等级签：纯英文数字，默认字体即可，主控偏青、其它白色，点穿透
 func _make_level_label(is_main: bool) -> Label:
 	var lv := Label.new()
+	lv.add_theme_font_override("font", game_font())
 	lv.add_theme_font_size_override("font_size", 14)
 	if is_main:
 		lv.add_theme_color_override("font_color", Color(0.7, 1.0, 1.0))
