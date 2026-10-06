@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://c3lfuxcccyjy0"]
+
+[ext_resource type="Script" uid="uid://byd3tm5sxj6d" path="res://autoload/audio_manager.gd" id="1_10s6x"]
+[ext_resource type="AudioStream" uid="uid://c7ragr5vuqqab" path="res://main/声音/mixkit-yoga-song-444.mp3" id="2_hm8fk"]
+[ext_resource type="AudioStream" uid="uid://b8hb06aw5f0rw" path="res://main/声音/mixkit-baby-yohan-1052.mp3" id="3_hf6x6"]
+
+[node name="AudioManager" type="Node" unique_id=1790234589]
+script = ExtResource("1_10s6x")
+
+[node name="主界面" type="AudioStreamPlayer" parent="." unique_id=1179937070]
+stream = ExtResource("2_hm8fk")
+volume_db = -10.0
+
+[node name="游戏界面" type="AudioStreamPlayer" parent="." unique_id=1826500816]
+stream = ExtResource("3_hf6x6")
+volume_db = -80.0

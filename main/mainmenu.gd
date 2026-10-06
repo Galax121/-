@@ -10,6 +10,7 @@ func _ready() -> void:
 	_build_help()
 	# 延迟一帧再绑按钮动画：等布局算完尺寸，缩放才围绕按钮中心
 	call_deferred("_init_button_fx")
+	AudioManager.update_music_layer(1)
 
 func _init_button_fx() -> void:
 	var box: Node = get_node_or_null("VBoxContainer")
