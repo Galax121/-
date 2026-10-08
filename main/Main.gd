@@ -610,7 +610,7 @@ func _make_bar(fill: Color) -> ProgressBar:
 func _sync_combat_bars() -> void:
 	if combat == null:
 		return
-	combat.level = mini(GameManager.get_level(), 5)
+	combat.level = mini(GameManager.get_level(), 30)
 	var sys = GameManager.skill_system
 	if sys != null and sys.has_method("get_upgrade_progress"):
 		var pg: Vector2 = sys.get_upgrade_progress()
