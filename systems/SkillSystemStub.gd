@@ -20,11 +20,9 @@ func init() -> void:
 	print("[SkillSystem] init，初始等级 = 1，升下一级所需经验 = %d" % exp_to_next)
 	EventBus.level_changed.emit(level)
 
-# 每帧调用：这里是测试用的自动加经验，正式接经验球时要把 add_exp 删掉！
-func tick(delta: float) -> void:
-	# ⚠️ 仅用于测试！每帧加10点经验，让你能立刻看到升级。
-	# 正式接经验球或击杀逻辑的时候，务必把这行注释掉或删掉！
-	add_exp(10.0 * delta)
+# 每帧调用：经验由经验球拾取驱动，这里不自动加
+func tick(_delta: float) -> void:
+	pass
 
 # 核心公式：升下一级所需经验 (22 * 1.13^(lv-1))
 func get_exp_to_next_level() -> float:

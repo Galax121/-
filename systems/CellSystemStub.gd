@@ -6,8 +6,12 @@ extends "res://core/ICellSystem.gd"
 
 # 当前细胞总数
 var cell_count: int = 1
-# 每秒平均增长多少个细胞（0.22：约220秒到50；5级在160秒，赛后60秒完赛）
-var growth_per_sec: float = 0.22
+# 每秒平均增长多少个细胞（会按等级上调：等级1 ≈ 基础数×1/30，等级30 ≈ ×1）
+# 配合 MAX_LEVEL=30 与 growth_per_sec_full，让分裂真正成为高等级后的爆发
+var base_growth: float = 0.22
+const MAX_GROWTH_MULT: float = 1.0  # 30级时的增殖倍数（相对 base_growth）
+var _current_growth: float = 0.0
+
 # 小数累加器，避免每帧都只能加整数
 var _accum: float = 0.0
 
@@ -18,9 +22,15 @@ func init() -> void:
 	print("[CellSystemStub] init，初始细胞数 = 1")
 	EventBus.cell_count_changed.emit(cell_count)
 
-# 每帧调用：按 growth_per_sec 累加，满 1 个就真正增加
+# 每帧调用：按等级系数增殖，等级越高分裂越快。
+# 系数：lv/30，30级才到满档，前期几乎不增殖，逼你冲高等级
 func tick(delta: float) -> void:
-	_accum += delta * growth_per_sec
+	var lvl: int = 1
+	if GameManager != null and GameManager.skill_system != null:
+		lvl = int(GameManager.skill_system.get("level"))
+	var mult: float = clampf(float(lvl) / 30.0, 0.03, 1.0)  # 最低3%不至于完全停住
+	_current_growth = base_growth * mult
+	_accum += delta * _current_growth
 	if _accum >= 1.0:
 		spawn_cell(int(_accum))
 		_accum -= float(int(_accum))

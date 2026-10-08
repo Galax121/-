@@ -105,6 +105,11 @@ var _enemy_next_in: float = 0.0
 var _enemy_time: float = 0.0
 # 每个敌军的家（3级出生位点），4级围堵后不再拴绳
 var enemy_homes: Array[Vector2] = []
+# 经验球：小白点，主控拾取后消失并加经验
+var orbs: Array[Sprite2D] = []
+const ORB_SPAWN_INTERVAL: float = 2.5
+var _orb_timer: float = 0.0
+var _orb_tex: Texture2D
 
 func _ready() -> void:
 	rng.randomize()
@@ -189,6 +194,7 @@ func _process(delta: float) -> void:
 	_update_stamina(delta)
 	_update_spawning(delta)
 	_update_enemy_spawning(delta)
+	_update_orbs(delta)
 	_grow_cells(delta)
 	_grow_enemies(delta)
 	_move_cells(delta)
@@ -677,7 +683,11 @@ func _update_spawning(delta: float) -> void:
 	if _spawn_timer < _next_spawn_in:
 		return
 	_spawn_timer = 0.0
-	_next_spawn_in = rng.randf_range(0.15, 0.4)
+	# 出生间隔随等级变小：lv1=0.6~1.2s，lv30=0.05~0.15s，满级才刷得快
+	var rate_mult: float = clampf(float(GameManager.get_level()) / 30.0, 0.03, 1.0)
+	var base_lo: float = lerpf(0.6, 0.05, rate_mult)
+	var base_hi: float = lerpf(1.2, 0.15, rate_mult)
+	_next_spawn_in = rng.randf_range(base_lo, base_hi)
 	_spawn_one_cell()
 	_pending -= 1
 	_spawned_total += 1
@@ -790,6 +800,47 @@ func _update_enemy_spawning(delta: float) -> void:
 	_spawn_enemy()
 	_enemy_pending -= 1
 	_enemy_spawned_total += 1
+
+# 经验球更新：每间隔 ORB_SPAWN_INTERVAL 秒出一个，主控碰到拾取加经验
+func _update_orbs(delta: float) -> void:
+	if _orb_tex == null:
+		_orb_tex = _make_orb_texture()
+	_orb_timer += delta
+	if _orb_timer >= ORB_SPAWN_INTERVAL and orbs.size() < 30:
+		_orb_timer = 0.0
+		_spawn_orb()
+	if cell_sprites.is_empty():
+		return
+	var main_pos: Vector2 = cell_sprites[0].position
+	for i in range(orbs.size() - 1, -1, -1):
+		if orbs[i].position.distance_to(main_pos) < CELL_RADIUS + 6.0:
+			var orb: Sprite2D = orbs[i]
+			orbs.remove_at(i)
+			orb.queue_free()
+			if GameManager.skill_system != null and GameManager.skill_system.has_method("add_exp"):
+				GameManager.skill_system.add_exp(8.0)
+
+func _spawn_orb() -> void:
+	var sp := Sprite2D.new()
+	sp.texture = _orb_tex
+	sp.position = _find_free_spot()
+	sp.scale = Vector2.ONE * 0.25
+	sp.modulate = Color(1.0, 0.95, 0.2)
+	cell_layer.add_child(sp)
+	orbs.append(sp)
+
+func _make_orb_texture() -> Texture2D:
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color(1, 1, 0.6, 1))
+	gradient.set_color(1, Color(1, 1, 0, 0))
+	var tex := GradientTexture2D.new()
+	tex.gradient = gradient
+	tex.width = 32
+	tex.height = 32
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	return tex
 
 # 出生一个敌军：红色，同尺寸。3级在家附近冒出来，4级围堵后全图自由生成
 func _spawn_enemy() -> void:
