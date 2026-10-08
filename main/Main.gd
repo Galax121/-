@@ -418,7 +418,7 @@ func _main_stats_text() -> String:
 		lines.append("速率：%.1f 像素/秒" % vel.length())
 		lines.append("体力：%.0f / %.0f" % [stamina, STAMINA_MAX])
 		lines.append("敌军：%d" % enemy_sprites.size())
-		lines.append("等级：lv.%d（最高 5）" % cell_levels[0])
+		lines.append("等级：lv.%d（最高 30）" % cell_levels[0])
 		lines.append("大小：缩放 %.2f，直径约 %.0f 像素" % [cell_sprites[0].scale.x, diameter])
 		lines.append("存活：%.1f 秒" % cell_ages[0])
 	lines.append("场上细胞总数：%d" % cell_sprites.size())
@@ -699,7 +699,7 @@ func _spawn_one_cell() -> void:
 	cell_sprites.append(sp)
 	cell_ages.append(0.0)
 	if is_main:
-		cell_levels.append(mini(GameManager.get_level(), 5))
+		cell_levels.append(mini(GameManager.get_level(), 30))
 		cell_vels.append(Vector2.RIGHT * MAIN_DRIFT_SPEED)
 	else:
 		cell_levels.append(1)
@@ -749,9 +749,9 @@ func _grow_cells(delta: float) -> void:
 		cell_sprites[i].scale = Vector2(s, s)
 
 # 其它细胞升级：存活每满 40 秒升 1 级，上限为主控当前等级减一（至少 1 级）
-# 主控等级直接跟技能系统走（最高 5 级已在 SkillSystemStub 里封顶）
+# 主控等级直接跟技能系统走（最高 30 级已在 SkillSystemStub 里封顶）
 func _update_other_levels(_delta: float) -> void:
-	var main_lv: int = mini(GameManager.get_level(), 5)
+	var main_lv: int = mini(GameManager.get_level(), 30)
 	if not cell_levels.is_empty() and cell_levels[0] != main_lv:
 		cell_levels[0] = main_lv
 		cell_level_labels[0].text = "lv.%d" % main_lv
@@ -1018,7 +1018,7 @@ func _collide_cells() -> void:
 
 # 实时状态行：等级倒计时 + 敌军模式，每帧刷新，与当前设置对齐
 func _update_realtime_labels() -> void:
-	var lv: int = mini(GameManager.get_level(), 5)
+	var lv: int = mini(GameManager.get_level(), 30)
 	label_level.text = "等级：%d" % lv
 	var active := false
 	if GameManager.enemy_system != null:
@@ -1045,9 +1045,9 @@ func _update_realtime_labels() -> void:
 func _on_env_changed(name: String, value: float) -> void:
 	label_env.text = "环境 %s: %.1f" % [name, value]
 
-# 左上角等级只代表主控（与头顶 lv.数字一致，最高 5）
+# 左上角等级只代表主控（与头顶 lv.数字一致，最高 30）
 func _on_level_changed(level: int) -> void:
-	label_level.text = "等级: %d" % mini(level, 5)
+	label_level.text = "等级: %d" % mini(level, 30)
 
 func _on_ending_triggered(ending_id: String) -> void:
 	var desc := ending_id
