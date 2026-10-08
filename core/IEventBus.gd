@@ -15,6 +15,10 @@ signal cell_count_changed(count: int)
 signal env_changed(name: String, value: float)
 # 等级变化时发出，参数为当前等级（副程 B 发，副程 C 收）
 signal level_changed(level: int)
+# 主控经验变化时发出（累计经验、当前等级内经验、下一级所需经验）
+signal experience_changed(total_experience: int, experience: int, exp_to_next: int)
+# 请求在游戏画面生成经验球；XP 只在玩家收集该球时入账
+signal experience_orb_spawn_requested(xp_value: int, is_resume_bonus: bool)
 # 结局触发时发出，参数为结局 id，目前只有 "player_win"（主程发，副程 C 收）
 signal ending_triggered(ending_id: String)
 # 游戏状态机变化时发出，参数为状态名字符串（主程发，副程 C 收）

@@ -16,7 +16,7 @@ var hp: float = 100.0
 # ---------- 经验 EXP / 等级 ----------
 var exp: float = 0.0
 var level: int = 1
-var exp_to_next: float = 20.0
+var exp_to_next: float = 22.0
 var level_timer: float = 0.0
 
 # ---------- 法力 MP（只有主控有）----------
@@ -39,7 +39,7 @@ func init_main() -> void:
 	def_ = 0.0
 	level = 1
 	exp = 0.0
-	exp_to_next = 20.0
+	exp_to_next = 22.0
 
 func init_ally() -> void:
 	kind = Kind.ALLY
@@ -51,7 +51,7 @@ func init_ally() -> void:
 	def_ = 0.0
 	level = 1
 	exp = 0.0
-	exp_to_next = 20.0
+	exp_to_next = 22.0
 
 func init_enemy() -> void:
 	kind = Kind.ENEMY
@@ -77,7 +77,7 @@ func take_damage(amount: float) -> void:
 	# hp <= 0 时由外部判断死亡（kill_cell）
 
 # ---------- 每帧更新（已停用）----------
-# 注意：升级/回蓝的权威在 SkillSystemStub（40秒一级）和 Main.gd 体力里，
+# 注意：升级权威在 SkillSystemStub，体力在 Main.gd 管理，
 # 这里不再自己跑，避免两套 pacing 打架。本对象只存数 + 提供受伤公式。
 func _process(_delta: float) -> void:
 	pass

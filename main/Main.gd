@@ -16,6 +16,7 @@ var label_state: Label
 var label_cells: Label
 var label_enemy: Label
 var label_level: Label
+var label_xp: Label
 var label_env: Label
 var label_ending: Label
 var label_hint: Label
@@ -47,6 +48,7 @@ const SPEEDS: Array[float] = [0.5, 1.0, 1.5, 2.0, 3.0]
 # 状态浮层：显示主控所有数值，点任意处回到暂停菜单
 var state_overlay: CanvasLayer
 var state_label: Label
+var _lifecycle_paused: bool = false
 
 # 细胞画面相关：容器 + 共享贴图 + 随机数 + 已生成的精灵列表 + 每个细胞的速度和年龄
 var cell_layer: Node2D
@@ -76,7 +78,7 @@ const MAIN_DRIFT_SPEED: float = 22.0
 const STAMINA_MAX: float = 100.0
 const STAMINA_DRAIN: float = 30.0
 const STAMINA_REGEN: float = 12.0
-# 其它细胞：移动速度与主控相同，出生后每隔这么久升1级（与主控同为40秒一级）
+# 其它细胞：移动速度与主控相同，出生后每隔这么久升1级
 const OTHER_LEVEL_UP_TIME: float = 40.0
 # 外观参数：其它细胞最大形态统一，主控比它们大一档，出生后用这么久长满
 const CELL_MAX_SCALE: float = 0.8
@@ -105,6 +107,15 @@ var _enemy_next_in: float = 0.0
 var _enemy_time: float = 0.0
 # 每个敌军的家（3级出生位点），4级围堵后不再拴绳
 var enemy_homes: Array[Vector2] = []
+# Experience orbs are spatial pickups; XP is granted only after proximity collection.
+var experience_orbs: Array[Sprite2D] = []
+var experience_orb_values: Array[int] = []
+var _pending_orb_values: Array[int] = []
+var _pending_orb_bonuses: Array[bool] = []
+var orb_texture: Texture2D
+const ORB_PICKUP_RADIUS: float = 30.0
+const ORB_SPAWN_MIN_DISTANCE: float = 80.0
+const ORB_SPAWN_MAX_DISTANCE: float = 160.0
 
 func _ready() -> void:
 	rng.randomize()
@@ -114,6 +125,7 @@ func _ready() -> void:
 		combat = CellCombatStats.new()
 	combat.init_main()
 	_build_cell_layer()
+	orb_texture = _make_orb_texture()
 	_build_ui()
 	_build_bottom_bars()
 	_build_pause_ui()
@@ -143,6 +155,7 @@ func _connect_menu() -> void:
 func _on_start_pressed() -> void:
 	get_viewport().gui_release_focus()
 	get_tree().paused = false
+	_lifecycle_paused = false
 	Engine.time_scale = 1.0
 	speed_menu.visible = false
 	_update_speed_btn()
@@ -152,6 +165,7 @@ func _on_start_pressed() -> void:
 	state_overlay.visible = false
 	_clear_cells()
 	_clear_enemies()
+	_clear_experience_orbs()
 	stamina = STAMINA_MAX
 	is_sprinting = false
 	if combat != null:
@@ -189,6 +203,7 @@ func _process(delta: float) -> void:
 	_update_stamina(delta)
 	_update_spawning(delta)
 	_update_enemy_spawning(delta)
+	_update_experience_orbs()
 	_grow_cells(delta)
 	_grow_enemies(delta)
 	_move_cells(delta)
@@ -314,6 +329,7 @@ func _build_speed_ui() -> void:
 # 点倍速键：定住并弹速度单（同时收起暂停菜单防叠在一起）
 func _on_speed_pressed() -> void:
 	pause_menu.visible = false
+	GameManager.pause_gameplay()
 	get_tree().paused = true
 	speed_menu.visible = true
 
@@ -323,12 +339,14 @@ func _on_speed_chosen(value: float) -> void:
 	_update_speed_btn()
 	speed_menu.visible = false
 	pause_menu.visible = false
+	GameManager.resume_gameplay()
 	get_tree().paused = false
 
 # 点空白处：不换挡，直接回游戏
 func _on_speed_return() -> void:
 	speed_menu.visible = false
 	pause_menu.visible = false
+	GameManager.resume_gameplay()
 	get_tree().paused = false
 
 func _update_speed_btn() -> void:
@@ -364,12 +382,14 @@ func game_font() -> Font:
 # 点暂停键：定住整局（含细胞和计时），弹出菜单
 func _on_pause_pressed() -> void:
 	speed_menu.visible = false
+	GameManager.pause_gameplay()
 	get_tree().paused = true
 	pause_menu.visible = true
 
 # 继续：收起菜单，原速接着跑
 func _on_resume_pressed() -> void:
 	pause_menu.visible = false
+	GameManager.resume_gameplay()
 	get_tree().paused = false
 
 # 状态：藏暂停菜单，弹出主控数值浮层
@@ -386,6 +406,7 @@ func _on_state_return() -> void:
 # 退出游戏：解暂停 → 藏游戏 → 清细胞 → 停模拟 → 回主菜单
 func _on_quit_to_menu() -> void:
 	get_tree().paused = false
+	GameManager.stop_to_menu()
 	pause_menu.visible = false
 	state_overlay.visible = false
 	Engine.time_scale = 1.0
@@ -399,7 +420,7 @@ func _on_quit_to_menu() -> void:
 	bottom_box.visible = false
 	_clear_cells()
 	_clear_enemies()
-	GameManager.stop_to_menu()
+	_clear_experience_orbs()
 	if menu_layer != null:
 		menu_layer.visible = true
 
@@ -418,7 +439,7 @@ func _main_stats_text() -> String:
 		lines.append("速率：%.1f 像素/秒" % vel.length())
 		lines.append("体力：%.0f / %.0f" % [stamina, STAMINA_MAX])
 		lines.append("敌军：%d" % enemy_sprites.size())
-		lines.append("等级：lv.%d（最高 5）" % cell_levels[0])
+		lines.append("等级：lv.%d（最高 30）" % cell_levels[0])
 		lines.append("大小：缩放 %.2f，直径约 %.0f 像素" % [cell_sprites[0].scale.x, diameter])
 		lines.append("存活：%.1f 秒" % cell_ages[0])
 	lines.append("场上细胞总数：%d" % cell_sprites.size())
@@ -528,6 +549,7 @@ func _build_ui() -> void:
 	label_cells = _make_label(box, "细胞数量: -")
 	label_enemy = _make_label(box, "敌军数量: -")
 	label_level = _make_label(box, "等级: -")
+	label_xp = _make_label(box, "经验：0（0/22）")
 	label_env = _make_label(box, "环境温度: -")
 	label_ending = _make_label(box, "结局: -")
 	_make_label(box, "体力（空格加速）:")
@@ -538,7 +560,7 @@ func _build_ui() -> void:
 	stamina_bar.show_percentage = false
 	stamina_bar.custom_minimum_size = Vector2(220, 18)
 	box.add_child(stamina_bar)
-	label_hint = _make_label(box, "目标50胜！升级40秒一级，3级出敌军")
+	label_hint = _make_label(box, "经验球升级（最高30级），3级出敌军")
 	# 顶屏横幅：平时藏着，只在敌军出现/围堵时显示
 	label_enemy_alert = Label.new()
 	label_enemy_alert.text = "敌军出现！"
@@ -610,7 +632,7 @@ func _make_bar(fill: Color) -> ProgressBar:
 func _sync_combat_bars() -> void:
 	if combat == null:
 		return
-	combat.level = mini(GameManager.get_level(), 5)
+	combat.level = mini(GameManager.get_level(), 30)
 	var sys = GameManager.skill_system
 	if sys != null and sys.has_method("get_upgrade_progress"):
 		var pg: Vector2 = sys.get_upgrade_progress()
@@ -620,7 +642,7 @@ func _sync_combat_bars() -> void:
 	hp_bar.value = combat.hp
 	mp_bar.max_value = combat.max_mp
 	mp_bar.value = combat.mp
-	exp_bar.max_value = combat.exp_to_next
+	exp_bar.max_value = maxf(combat.exp_to_next, 1.0)
 	exp_bar.value = combat.exp
 
 func _make_label(parent: Control, text: String) -> Label:
@@ -635,6 +657,8 @@ func _connect_signals() -> void:
 	EventBus.enemy_count_changed.connect(_on_enemy_count_changed)
 	EventBus.env_changed.connect(_on_env_changed)
 	EventBus.level_changed.connect(_on_level_changed)
+	EventBus.experience_changed.connect(_on_experience_changed)
+	EventBus.experience_orb_spawn_requested.connect(_on_experience_orb_spawn_requested)
 	EventBus.ending_triggered.connect(_on_ending_triggered)
 	EventBus.game_state_changed.connect(_on_game_state_changed)
 
@@ -642,6 +666,8 @@ func _refresh_all() -> void:
 	_on_game_state_changed(GameManager.state_to_string(GameManager.current_state))
 	_on_cell_count_changed(GameManager.get_cell_count())
 	_on_level_changed(GameManager.get_level())
+	var progress := GameManager.get_experience_progress()
+	_on_experience_changed(GameManager.get_total_experience(), int(progress.x), int(progress.y))
 	_on_env_changed("temperature", GameManager.get_temperature())
 	if GameManager.ending_id != "":
 		_on_ending_triggered(GameManager.ending_id)
@@ -699,7 +725,7 @@ func _spawn_one_cell() -> void:
 	cell_sprites.append(sp)
 	cell_ages.append(0.0)
 	if is_main:
-		cell_levels.append(mini(GameManager.get_level(), 5))
+		cell_levels.append(mini(GameManager.get_level(), 30))
 		cell_vels.append(Vector2.RIGHT * MAIN_DRIFT_SPEED)
 	else:
 		cell_levels.append(1)
@@ -749,9 +775,9 @@ func _grow_cells(delta: float) -> void:
 		cell_sprites[i].scale = Vector2(s, s)
 
 # 其它细胞升级：存活每满 40 秒升 1 级，上限为主控当前等级减一（至少 1 级）
-# 主控等级直接跟技能系统走（最高 5 级已在 SkillSystemStub 里封顶）
+# 主控等级直接跟技能系统走（最高 30 级已在 SkillSystemStub 里封顶）
 func _update_other_levels(_delta: float) -> void:
-	var main_lv: int = mini(GameManager.get_level(), 5)
+	var main_lv: int = mini(GameManager.get_level(), 30)
 	if not cell_levels.is_empty() and cell_levels[0] != main_lv:
 		cell_levels[0] = main_lv
 		cell_level_labels[0].text = "lv.%d" % main_lv
@@ -931,6 +957,108 @@ func _clear_enemies() -> void:
 	_enemy_spawn_timer = 0.0
 	_enemy_next_in = 0.0
 
+func _make_orb_texture() -> Texture2D:
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color(1, 1, 1, 1))
+	gradient.set_color(1, Color(1, 1, 1, 0))
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.width = 32
+	texture.height = 32
+	texture.fill = GradientTexture2D.FILL_RADIAL
+	texture.fill_from = Vector2(0.5, 0.5)
+	texture.fill_to = Vector2(1.0, 0.5)
+	return texture
+
+func _on_experience_orb_spawn_requested(xp_value: int, is_resume_bonus: bool) -> void:
+	if cell_layer == null or not cell_layer.visible or cell_sprites.is_empty():
+		_pending_orb_values.append(xp_value)
+		_pending_orb_bonuses.append(is_resume_bonus)
+		return
+	_spawn_experience_orb(xp_value, is_resume_bonus)
+
+func _spawn_experience_orb(xp_value: int, is_resume_bonus: bool) -> void:
+	if cell_layer == null or not cell_layer.visible or cell_sprites.is_empty():
+		return
+	var orb := Sprite2D.new()
+	orb.texture = orb_texture
+	orb.position = _find_orb_spawn_position(cell_sprites[0].position)
+	orb.scale = Vector2.ONE * (0.42 if is_resume_bonus else 0.3)
+	orb.modulate = Color(1.0, 0.85, 0.25) if is_resume_bonus else Color(0.35, 1.0, 0.55)
+	orb.z_index = 1
+	cell_layer.add_child(orb)
+	experience_orbs.append(orb)
+	experience_orb_values.append(xp_value)
+	var value_label := Label.new()
+	value_label.text = str(xp_value)
+	value_label.position = Vector2(-10, -20)
+	value_label.add_theme_font_size_override("font_size", 10)
+	value_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	value_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	value_label.scale = Vector2.ONE / orb.scale.x
+	orb.add_child(value_label)
+
+func _find_orb_spawn_position(origin: Vector2) -> Vector2:
+	var max_radius := DISH_RADIUS - CELL_RADIUS - 8.0
+	for attempt in range(24):
+		var angle := rng.randf_range(0.0, TAU)
+		var direction := Vector2(cos(angle), sin(angle))
+		var projection := origin.dot(direction)
+		var discriminant := projection * projection + max_radius * max_radius - origin.length_squared()
+		if discriminant < 0.0:
+			continue
+		var edge_distance := -projection + sqrt(discriminant)
+		if edge_distance < ORB_SPAWN_MIN_DISTANCE:
+			continue
+		var max_distance := minf(ORB_SPAWN_MAX_DISTANCE, edge_distance)
+		var distance := rng.randf_range(ORB_SPAWN_MIN_DISTANCE, max_distance)
+		return origin + direction * distance
+	var inward_direction := -origin.normalized() if origin.length_squared() > 0.001 else Vector2.RIGHT
+	return origin + inward_direction * ORB_SPAWN_MIN_DISTANCE
+
+func _update_experience_orbs() -> void:
+	if cell_sprites.is_empty():
+		return
+	while not _pending_orb_values.is_empty():
+		_spawn_experience_orb(_pending_orb_values.pop_front(), _pending_orb_bonuses.pop_front())
+	var player_position: Vector2 = cell_sprites[0].position
+	for i in range(experience_orbs.size() - 1, -1, -1):
+		var orb := experience_orbs[i]
+		var distance := orb.position.distance_to(player_position)
+		if distance <= ORB_PICKUP_RADIUS:
+			GameManager.collect_experience_orb(experience_orb_values[i])
+			experience_orbs.remove_at(i)
+			experience_orb_values.remove_at(i)
+			orb.queue_free()
+
+func _clear_experience_orbs() -> void:
+	for orb in experience_orbs:
+		orb.queue_free()
+	experience_orbs.clear()
+	experience_orb_values.clear()
+	_pending_orb_values.clear()
+	_pending_orb_bonuses.clear()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT or what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED:
+		_pause_for_lifecycle()
+	elif what == NOTIFICATION_WM_WINDOW_FOCUS_IN or what == NOTIFICATION_APPLICATION_FOCUS_IN or what == NOTIFICATION_APPLICATION_RESUMED:
+		_resume_from_lifecycle()
+
+func _pause_for_lifecycle() -> void:
+	if not GameManager.started or GameManager.current_state == GameManager.GameState.END or get_tree().paused:
+		return
+	_lifecycle_paused = true
+	GameManager.pause_gameplay()
+	get_tree().paused = true
+
+func _resume_from_lifecycle() -> void:
+	if not _lifecycle_paused:
+		return
+	_lifecycle_paused = false
+	GameManager.resume_gameplay()
+	get_tree().paused = false
+
 # 在培养皿圆内找一个与其他细胞不重叠的出生点，最多试 20 次
 func _find_free_spot() -> Vector2:
 	var min_sep: float = CELL_RADIUS * 2.4
@@ -1016,9 +1144,9 @@ func _collide_cells() -> void:
 			if i == 0 and nv1.length() > MAIN_BASE_SPEED * MAIN_SPRINT_MULT:
 				cell_vels[0] = nv1.normalized() * MAIN_BASE_SPEED * MAIN_SPRINT_MULT
 
-# 实时状态行：等级倒计时 + 敌军模式，每帧刷新，与当前设置对齐
+# 实时状态行：等级 + 敌军模式，每帧刷新，与当前设置对齐
 func _update_realtime_labels() -> void:
-	var lv: int = mini(GameManager.get_level(), 5)
+	var lv: int = mini(GameManager.get_level(), 30)
 	label_level.text = "等级：%d" % lv
 	var active := false
 	if GameManager.enemy_system != null:
@@ -1045,9 +1173,12 @@ func _update_realtime_labels() -> void:
 func _on_env_changed(name: String, value: float) -> void:
 	label_env.text = "环境 %s: %.1f" % [name, value]
 
-# 左上角等级只代表主控（与头顶 lv.数字一致，最高 5）
+# 左上角等级只代表主控（与头顶 lv.数字一致，最高 30）
 func _on_level_changed(level: int) -> void:
-	label_level.text = "等级: %d" % mini(level, 5)
+	label_level.text = "等级: %d" % mini(level, 30)
+
+func _on_experience_changed(total_experience: int, experience: int, exp_to_next: int) -> void:
+	label_xp.text = "经验：%d（%d/%d）" % [total_experience, experience, exp_to_next]
 
 func _on_ending_triggered(ending_id: String) -> void:
 	var desc := ending_id

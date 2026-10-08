@@ -8,6 +8,7 @@ const EnvironmentSystemScript: GDScript = preload("res://systems/EnvironmentSyst
 const SkillSystemScript: GDScript = preload("res://systems/SkillSystemStub.gd")
 const EndingSystemScript: GDScript = preload("res://systems/EndingSystemStub.gd")
 const EnemySystemScript: GDScript = preload("res://systems/EnemySystemStub.gd")
+const ExperienceOrbSystemScript: GDScript = preload("res://systems/ExperienceOrbSystem.gd")
 
 var current_state: int = GameState.SELECT
 var elapsed: float = 0.0
@@ -22,6 +23,8 @@ var environment_system = null
 var skill_system = null
 var ending_system = null
 var enemy_system = null
+var experience_orb_system = null
+var _resume_bonus_armed: bool = false
 
 func _ready() -> void:
 	if cell_system == null:
@@ -34,11 +37,15 @@ func _ready() -> void:
 		ending_system = EndingSystemScript.new()
 	if enemy_system == null:
 		enemy_system = EnemySystemScript.new()
+	if experience_orb_system == null:
+		experience_orb_system = ExperienceOrbSystemScript.new()
 	cell_system.init()
 	environment_system.init()
 	skill_system.init()
 	ending_system.init()
 	enemy_system.init()
+	experience_orb_system.init()
+	experience_orb_system.orb_spawn_requested.connect(_on_orb_spawn_requested)
 	_change_state(GameState.SELECT)
 	print("[GameManager] 游戏启动，当前状态 = SELECT（自动选细胞）")
 
@@ -62,19 +69,23 @@ func _tick_current(delta: float) -> void:
 			pass
 		GameState.GROW:
 			cell_system.tick(delta)
-			skill_system.tick(delta)
 			enemy_system.tick(delta)
+			_tick_experience_orbs(delta)
 		GameState.ENV:
 			cell_system.tick(delta)
-			skill_system.tick(delta)
 			environment_system.tick(delta)
 			enemy_system.tick(delta)
+			_tick_experience_orbs(delta)
 		GameState.ENEMY:
 			cell_system.tick(delta)
-			skill_system.tick(delta)
 			environment_system.tick(delta)
 			enemy_system.tick(delta)
+			_tick_experience_orbs(delta)
 			print("[GameManager] 敌人出现（占位）... 当前细胞数 = %d" % get_cell_count())
+
+func _tick_experience_orbs(delta: float) -> void:
+	if get_level() < SkillSystemScript.MAX_LEVEL:
+		experience_orb_system.tick(delta)
 
 # 状态流转（新节奏）：准备2秒 → 成长期（主控2级前）→ 发展期（3级敌军登场前）
 # → 敌军期（直到50胜）。胜利只由 _check_ending 判，超时不再强制结算
@@ -125,8 +136,10 @@ func start_game() -> void:
 	skill_system.init()
 	ending_system.init()
 	enemy_system.init()
+	experience_orb_system.init()
 	elapsed = 0.0
 	ending_id = ""
+	_resume_bonus_armed = false
 	started = true
 	_change_state(GameState.SELECT)
 	print("[GameManager] 玩家点开始，进入游戏")
@@ -134,7 +147,34 @@ func start_game() -> void:
 # 退出到菜单：停住推进，画面由 Main.gd 藏起来
 func stop_to_menu() -> void:
 	started = false
+	_resume_bonus_armed = false
 	print("[GameManager] 退出到菜单，模拟暂停")
+
+# Mark a real pause so duplicate resume callbacks cannot award repeated bonuses.
+func pause_gameplay() -> void:
+	if started and current_state != GameState.END:
+		_resume_bonus_armed = true
+
+func resume_gameplay() -> void:
+	if not _resume_bonus_armed:
+		return
+	_resume_bonus_armed = false
+	if started and current_state != GameState.END and experience_orb_system != null:
+		experience_orb_system.spawn_resume_bonus()
+
+func _on_orb_spawn_requested(xp_value: int, is_resume_bonus: bool) -> void:
+	EventBus.experience_orb_spawn_requested.emit(xp_value, is_resume_bonus)
+
+# Called only after a visible experience orb is collected.
+func collect_experience_orb(xp_value: int) -> void:
+	if not started or current_state == GameState.END or skill_system == null:
+		return
+	skill_system.add_experience(xp_value)
+
+func spawn_enemy_experience_orb(enemy_size: String) -> void:
+	if not started or current_state == GameState.END or experience_orb_system == null:
+		return
+	experience_orb_system.spawn_enemy_drop(enemy_size)
 
 # 敌方导演：主控3级放敌军游荡，主控4级转围堵（每帧检查一次）
 func _update_enemy_director() -> void:
@@ -202,6 +242,16 @@ func get_level() -> int:
 		if v != null:
 			return int(v)
 	return 1
+
+func get_total_experience() -> int:
+	if skill_system != null:
+		return int(skill_system.total_experience)
+	return 0
+
+func get_experience_progress() -> Vector2:
+	if skill_system != null and skill_system.has_method("get_upgrade_progress"):
+		return skill_system.get_upgrade_progress()
+	return Vector2.ZERO
 
 func get_temperature() -> float:
 	if environment_system != null:

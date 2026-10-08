@@ -1,34 +1,43 @@
 extends "res://core/SystemBase.gd"
-## 技能/升级系统占位实现（主控等级）。
-## 规则：每存活 40 秒升 1 级，最高 5 级，升级时广播 level_changed。
+## 主控经验与等级系统。经验只由经验球收集获得。
 
 # 当前等级（即主控等级）
 var level: int = 1
-# 主控细胞最大等级：满级后停住
-const MAX_LEVEL: int = 5
-# 升一级要多少秒
-const LEVEL_UP_TIME: float = 40.0
-# 距上次升级过去的秒数
-var _time: float = 0.0
+# 累计经验与当前等级内的经验进度
+var total_experience: int = 0
+var experience: int = 0
+var exp_to_next: int = 22
+const MAX_LEVEL: int = 30
 
-# 初始化：回到 1 级并广播一次
 func init() -> void:
 	level = 1
-	_time = 0.0
-	print("[SkillSystemStub] init，初始等级 = 1")
+	total_experience = 0
+	experience = 0
+	exp_to_next = xp_required_for_level(level)
 	EventBus.level_changed.emit(level)
+	EventBus.experience_changed.emit(total_experience, experience, exp_to_next)
 
-# 每帧调用：攒满 40 秒升 1 级
-func tick(delta: float) -> void:
-	if level >= MAX_LEVEL:
+static func xp_required_for_level(current_level: int) -> int:
+	return roundi(22.0 * pow(1.13, float(maxi(current_level - 1, 0))))
+
+func add_experience(amount: int) -> void:
+	if amount <= 0 or level >= MAX_LEVEL:
 		return
-	_time += delta
-	if _time >= LEVEL_UP_TIME:
-		_time -= LEVEL_UP_TIME
+	var leveled_up := false
+	total_experience += amount
+	experience += amount
+	while level < MAX_LEVEL and experience >= exp_to_next:
+		experience -= exp_to_next
 		level += 1
-		print("[SkillSystemStub] 升级！当前等级 = %d" % level)
 		EventBus.level_changed.emit(level)
+		leveled_up = true
+		exp_to_next = xp_required_for_level(level) if level < MAX_LEVEL else 0
+	if level >= MAX_LEVEL:
+		experience = 0
+	if leveled_up:
+		print("[SkillSystemStub] 升级！当前等级 = %d" % level)
+	EventBus.experience_changed.emit(total_experience, experience, exp_to_next)
 
-# 只读：升级进度（已攒秒数, 满级所需秒数），供 Main.gd 状态显示用
+# 只读：返回当前等级内的经验和升到下一级所需经验，供经验条使用。
 func get_upgrade_progress() -> Vector2:
-	return Vector2(_time, LEVEL_UP_TIME)
+	return Vector2(float(experience), float(exp_to_next))
